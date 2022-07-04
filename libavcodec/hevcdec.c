@@ -3647,48 +3647,43 @@ static av_cold int hevc_init_context(AVCodecContext *avctx)
     s->HEVClcList = av_mallocz(sizeof(HEVCLocalContext*) * s->threads_number);
     s->sList = av_mallocz(sizeof(HEVCContext*) * s->threads_number);
     if (!s->HEVClc || !s->HEVClcList || !s->sList)
-        goto fail;
+        return AVERROR(ENOMEM);
     s->HEVClcList[0] = s->HEVClc;
     s->sList[0] = s;
 
     s->cabac_state = av_malloc(HEVC_CONTEXTS);
     if (!s->cabac_state)
-        goto fail;
+        return AVERROR(ENOMEM);
 
     s->output_frame = av_frame_alloc();
     if (!s->output_frame)
-        goto fail;
+        return AVERROR(ENOMEM);
 
     for (i = 0; i < FF_ARRAY_ELEMS(s->DPB); i++) {
         s->DPB[i].frame = av_frame_alloc();
         if (!s->DPB[i].frame)
-            goto fail;
+            return AVERROR(ENOMEM);
         s->DPB[i].tf.f = s->DPB[i].frame;
 
         s->DPB[i].frame_grain = av_frame_alloc();
         if (!s->DPB[i].frame_grain)
-            goto fail;
+            return AVERROR(ENOMEM);
     }
 
     s->max_ra = INT_MAX;
 
     s->md5_ctx = av_md5_alloc();
     if (!s->md5_ctx)
-        goto fail;
+        return AVERROR(ENOMEM);
 
     ff_bswapdsp_init(&s->bdsp);
 
     s->dovi_ctx.logctx = avctx;
-    s->context_initialized = 1;
     s->eos = 0;
 
     ff_hevc_reset_sei(&s->sei);
 
     return 0;
-
-fail:
-    hevc_decode_free(avctx);
-    return AVERROR(ENOMEM);
 }
 
 #if HAVE_THREADS
@@ -3698,12 +3693,6 @@ static int hevc_update_thread_context(AVCodecContext *dst,
     HEVCContext *s  = dst->priv_data;
     HEVCContext *s0 = src->priv_data;
     int i, ret;
-
-    if (!s->context_initialized) {
-        ret = hevc_init_context(dst);
-        if (ret < 0)
-            return ret;
-    }
 
     for (i = 0; i < FF_ARRAY_ELEMS(s->DPB); i++) {
         ff_hevc_unref_frame(s, &s->DPB[i], ~0);
@@ -3814,9 +3803,12 @@ static av_cold int hevc_decode_init(AVCodecContext *avctx)
     HEVCContext *s = avctx->priv_data;
     int ret;
 
-    if(avctx->active_thread_type & FF_THREAD_SLICE)
+    if (avctx->active_thread_type & FF_THREAD_SLICE) {
         s->threads_number = avctx->thread_count;
-    else
+        ret = ff_slice_thread_init_progress(avctx);
+        if (ret < 0)
+            return ret;
+    } else
         s->threads_number = 1;
 
     if((avctx->active_thread_type & FF_THREAD_FRAME) && avctx->thread_count > 1)

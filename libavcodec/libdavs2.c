@@ -177,6 +177,7 @@ static av_cold int davs2_end(AVCodecContext *avctx)
 
     /* close the decoder */
     if (cad->decoder) {
+        davs2_flush(avctx);
         davs2_decoder_close(cad->decoder);
         cad->decoder = NULL;
     }
@@ -189,7 +190,7 @@ static int davs2_decode_frame(AVCodecContext *avctx, AVFrame *frame,
 {
     DAVS2Context *cad      = avctx->priv_data;
     int           buf_size = avpkt->size;
-    uint8_t      *buf_ptr  = avpkt->data;
+    const uint8_t *buf_ptr = avpkt->data;
     int           ret      = DAVS2_DEFAULT;
 
     /* end of stream, output what is still in the buffers */
