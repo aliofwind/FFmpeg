@@ -16,22 +16,24 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVFILTER_OPENCL_SOURCE_H
-#define AVFILTER_OPENCL_SOURCE_H
+#include "config.h"
 
-extern const char *ff_opencl_source_avgblur;
-extern const char *ff_opencl_source_colorkey;
-extern const char *ff_opencl_source_colorspace_common;
-extern const char *ff_opencl_source_convolution;
-extern const char *ff_opencl_source_deshake;
-extern const char *ff_opencl_source_neighbor;
-extern const char *ff_opencl_source_nlmeans;
-extern const char *ff_opencl_source_overlay;
-extern const char *ff_opencl_source_pad;
-extern const char *ff_opencl_source_remap;
-extern const char *ff_opencl_source_tonemap;
-extern const char *ff_opencl_source_transpose;
-extern const char *ff_opencl_source_unsharp;
-extern const char *ff_opencl_source_xfade;
+#if !CONFIG_VULKAN
+#include <stddef.h>
+#include "pixfmt.h"
 
-#endif /* AVFILTER_OPENCL_SOURCE_H */
+typedef enum VkFormat VkFormat;
+typedef struct AVVkFrame AVVkFrame;
+const VkFormat *av_vkfmt_from_pixfmt(enum AVPixelFormat p);
+AVVkFrame *av_vk_frame_alloc(void);
+
+const VkFormat *av_vkfmt_from_pixfmt(enum AVPixelFormat p)
+{
+    return NULL;
+}
+
+AVVkFrame *av_vk_frame_alloc(void)
+{
+    return NULL;
+}
+#endif /* CONFIG_VULKAN */

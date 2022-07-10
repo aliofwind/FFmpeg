@@ -5179,6 +5179,8 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         distance++;
         if (av_sat_add64(dts, sample_duration) != dts + (uint64_t)sample_duration)
             return AVERROR_INVALIDDATA;
+        if (!sample_size)
+            return AVERROR_INVALIDDATA;
         dts += sample_duration;
         offset += sample_size;
         sc->data_size += sample_size;
@@ -6797,7 +6799,10 @@ static int mov_read_dfla(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
     avio_rb24(pb); /* Flags */
 
-    avio_read(pb, buf, sizeof(buf));
+    if (avio_read(pb, buf, sizeof(buf)) != sizeof(buf)) {
+        av_log(c->fc, AV_LOG_ERROR, "failed to read FLAC metadata block header\n");
+        return pb->error < 0 ? pb->error : AVERROR_INVALIDDATA;
+    }
     flac_parse_block_header(buf, &last, &type, &size);
 
     if (type != FLAC_METADATA_TYPE_STREAMINFO || size != FLAC_STREAMINFO_SIZE) {
