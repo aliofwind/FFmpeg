@@ -1237,8 +1237,8 @@ FFCodec ff_libx264_encoder = {
     .p.pix_fmts       = pix_fmts_all,
 #endif
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP | FF_CODEC_CAP_AUTO_THREADS
-#if X264_BUILD >= 158
-                      | FF_CODEC_CAP_INIT_THREADSAFE
+#if X264_BUILD < 158
+                      | FF_CODEC_CAP_NOT_INIT_THREADSAFE
 #endif
                       ,
 };
@@ -1269,8 +1269,8 @@ const FFCodec ff_libx264rgb_encoder = {
     .close          = X264_close,
     .defaults       = x264_defaults,
     .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP | FF_CODEC_CAP_AUTO_THREADS
-#if X264_BUILD >= 158
-                      | FF_CODEC_CAP_INIT_THREADSAFE
+#if X264_BUILD < 158
+                      | FF_CODEC_CAP_NOT_INIT_THREADSAFE
 #endif
                       ,
 };
@@ -1300,6 +1300,7 @@ const FFCodec ff_libx262_encoder = {
     FF_CODEC_ENCODE_CB(X264_frame),
     .close            = X264_close,
     .defaults         = x264_defaults,
-    .caps_internal    = FF_CODEC_CAP_INIT_CLEANUP | FF_CODEC_CAP_AUTO_THREADS,
+    .caps_internal    = FF_CODEC_CAP_NOT_INIT_THREADSAFE |
+                        FF_CODEC_CAP_INIT_CLEANUP | FF_CODEC_CAP_AUTO_THREADS,
 };
 #endif

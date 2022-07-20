@@ -1,6 +1,11 @@
 Entries are sorted chronologically from oldest to youngest within each release,
 releases are sorted from youngest to oldest.
 
+version <next>:
+- Radiance HDR image support
+- ddagrab (Desktop Duplication) video capture filter
+
+
 version 5.1:
 - add ipfs/ipns protocol support
 - dialogue enhance audio filter
@@ -24,6 +29,7 @@ version 5.1:
 - VDPAU AV1 hwaccel
 - PHM image format support
 - remap_opencl filter
+- added chromakey_cuda filter
 
 
 version 5.0:

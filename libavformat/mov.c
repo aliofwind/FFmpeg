@@ -3062,6 +3062,21 @@ static int mov_read_stts(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     st->nb_frames= total_sample_count;
     if (duration)
         st->duration= FFMIN(st->duration, duration);
+
+    // All samples have zero duration. They have higher chance be chose by
+    // mov_find_next_sample, which leads to seek again and again.
+    //
+    // It's AVERROR_INVALIDDATA actually, but such files exist in the wild.
+    // So only mark data stream as discarded for safety.
+    if (!duration && sc->stts_count &&
+            st->codecpar->codec_type == AVMEDIA_TYPE_DATA) {
+        av_log(c->fc, AV_LOG_WARNING,
+               "All samples in data stream index:id [%d:%d] have zero "
+               "duration, stream set to be discarded by default. Override "
+               "using AVStream->discard or -discard for ffmpeg command.\n",
+               st->index, st->id);
+        st->discard = AVDISCARD_ALL;
+    }
     sc->track_end = duration;
     return 0;
 }
@@ -6824,9 +6839,6 @@ static int cenc_scheme_decrypt(MOVContext *c, MOVStreamContext *sc, AVEncryption
 {
     int i, ret;
     int bytes_of_protected_data;
-    int partially_encrypted_block_size;
-    uint8_t *partially_encrypted_block;
-    uint8_t block[16];
 
     if (!sc->cenc.aes_ctr) {
         /* initialize the cipher */
@@ -6849,8 +6861,6 @@ static int cenc_scheme_decrypt(MOVContext *c, MOVStreamContext *sc, AVEncryption
         return 0;
     }
 
-    partially_encrypted_block_size = 0;
-
     for (i = 0; i < sample->subsample_count; i++) {
         if (sample->subsamples[i].bytes_of_clear_data + sample->subsamples[i].bytes_of_protected_data > size) {
             av_log(c->fc, AV_LOG_ERROR, "subsample size exceeds the packet size left\n");
@@ -6863,28 +6873,8 @@ static int cenc_scheme_decrypt(MOVContext *c, MOVStreamContext *sc, AVEncryption
 
         /* decrypt the encrypted bytes */
 
-        if (partially_encrypted_block_size) {
-            memcpy(block, partially_encrypted_block, partially_encrypted_block_size);
-            memcpy(block+partially_encrypted_block_size, input, 16-partially_encrypted_block_size);
-            av_aes_ctr_crypt(sc->cenc.aes_ctr, block, block, 16);
-            memcpy(partially_encrypted_block, block, partially_encrypted_block_size);
-            memcpy(input, block+partially_encrypted_block_size, 16-partially_encrypted_block_size);
-            input += 16-partially_encrypted_block_size;
-            size -= 16-partially_encrypted_block_size;
-            bytes_of_protected_data = sample->subsamples[i].bytes_of_protected_data - (16-partially_encrypted_block_size);
-        } else {
-            bytes_of_protected_data = sample->subsamples[i].bytes_of_protected_data;
-        }
-
-        if (i < sample->subsample_count-1) {
-            int num_of_encrypted_blocks = bytes_of_protected_data/16;
-            partially_encrypted_block_size = bytes_of_protected_data%16;
-            if (partially_encrypted_block_size)
-                partially_encrypted_block = input + 16*num_of_encrypted_blocks;
-            av_aes_ctr_crypt(sc->cenc.aes_ctr, input, input, 16*num_of_encrypted_blocks);
-        } else {
-            av_aes_ctr_crypt(sc->cenc.aes_ctr, input, input, bytes_of_protected_data);
-        }
+        bytes_of_protected_data = sample->subsamples[i].bytes_of_protected_data;
+        av_aes_ctr_crypt(sc->cenc.aes_ctr, input, input, bytes_of_protected_data);
 
         input += bytes_of_protected_data;
         size -= bytes_of_protected_data;

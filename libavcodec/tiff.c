@@ -761,6 +761,7 @@ static int tiff_unpack_strip(TiffContext *s, AVFrame *p, uint8_t *dst, int strid
     if (s->is_bayer) {
         av_assert0(width == (s->bpp * s->width + 7) >> 3);
     }
+    av_assert0(!(s->is_bayer && is_yuv));
     if (p->format == AV_PIX_FMT_GRAY12) {
         av_fast_padded_malloc(&s->yuv_line, &s->yuv_line_size, width);
         if (s->yuv_line == NULL) {
@@ -844,6 +845,8 @@ static int tiff_unpack_strip(TiffContext *s, AVFrame *p, uint8_t *dst, int strid
             av_log(s->avctx, AV_LOG_ERROR, "More than one DNG JPEG strips unsupported\n");
             return AVERROR_PATCHWELCOME;
         }
+        if (!s->is_bayer)
+            return AVERROR_PATCHWELCOME;
         if ((ret = dng_decode_jpeg(s->avctx, p, s->stripsize, 0, 0, s->width, s->height)) < 0)
             return ret;
         return 0;
@@ -2187,6 +2190,6 @@ const FFCodec ff_tiff_decoder = {
     .close          = tiff_end,
     FF_CODEC_DECODE_CB(decode_frame),
     .p.capabilities = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_FRAME_THREADS,
-    .caps_internal  = FF_CODEC_CAP_INIT_THREADSAFE | FF_CODEC_CAP_INIT_CLEANUP,
+    .caps_internal  = FF_CODEC_CAP_INIT_CLEANUP,
     .p.priv_class   = &tiff_decoder_class,
 };
