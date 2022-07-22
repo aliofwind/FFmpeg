@@ -883,7 +883,14 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *rframe,
         if (buf_size < avctx->width * avctx->height / (128*8))
             return AVERROR_INVALIDDATA;
     } else {
-        if (buf_size < avctx->height / 8)
+        int w = avctx->width;
+        int s = 1 + w / (1<<23);
+
+        w /= s;
+
+        for (i = 0; w > (1<<ff_log2_run[i]); i++)
+            w -= ff_log2_run[i];
+        if (buf_size < (avctx->height + i + 6) / 8 * s)
             return AVERROR_INVALIDDATA;
     }
 
