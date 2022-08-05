@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2020 Loongson Technology Corporation Limited
- * Contributed by Shiyou Yin <yinshiyou-hf@loongson.cn>
+ * Copyright (c) 2012 Mans Rullgard <mans@mansr.com>
  *
  * This file is part of FFmpeg.
  *
@@ -19,18 +18,23 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVCODEC_LOONGARCH_H264CHROMA_LASX_H
-#define AVCODEC_LOONGARCH_H264CHROMA_LASX_H
+#include "config.h"
+#include "flacencdsp.h"
 
-#include <stdint.h>
-#include <stddef.h>
-#include "libavcodec/h264.h"
+#define SAMPLE_SIZE 16
+#include "flacdsp_lpc_template.c"
 
-void ff_put_h264_chroma_mc4_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
-void ff_put_h264_chroma_mc8_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
-void ff_avg_h264_chroma_mc8_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
+#undef  SAMPLE_SIZE
+#define SAMPLE_SIZE 32
+#include "flacdsp_lpc_template.c"
 
-#endif /* AVCODEC_LOONGARCH_H264CHROMA_LASX_H */
+
+av_cold void ff_flacencdsp_init(FLACEncDSPContext *c)
+{
+    c->lpc16_encode = flac_lpc_encode_c_16;
+    c->lpc32_encode = flac_lpc_encode_c_32;
+
+#if ARCH_X86
+    ff_flacencdsp_init_x86(c);
+#endif
+}

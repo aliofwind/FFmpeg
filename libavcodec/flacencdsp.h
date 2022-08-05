@@ -1,7 +1,4 @@
 /*
- * Copyright (c) 2020 Loongson Technology Corporation Limited
- * Contributed by Shiyou Yin <yinshiyou-hf@loongson.cn>
- *
  * This file is part of FFmpeg.
  *
  * FFmpeg is free software; you can redistribute it and/or
@@ -19,18 +16,19 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVCODEC_LOONGARCH_H264CHROMA_LASX_H
-#define AVCODEC_LOONGARCH_H264CHROMA_LASX_H
+#ifndef AVCODEC_FLACENCDSP_H
+#define AVCODEC_FLACENCDSP_H
 
 #include <stdint.h>
-#include <stddef.h>
-#include "libavcodec/h264.h"
 
-void ff_put_h264_chroma_mc4_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
-void ff_put_h264_chroma_mc8_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
-void ff_avg_h264_chroma_mc8_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
+typedef struct FLACEncDSPContext {
+    void (*lpc16_encode)(int32_t *res, const int32_t *smp, int len, int order,
+                         const int32_t coefs[32], int shift);
+    void (*lpc32_encode)(int32_t *res, const int32_t *smp, int len, int order,
+                         const int32_t coefs[32], int shift);
+} FLACEncDSPContext;
 
-#endif /* AVCODEC_LOONGARCH_H264CHROMA_LASX_H */
+void ff_flacencdsp_init(FLACEncDSPContext *c);
+void ff_flacencdsp_init_x86(FLACEncDSPContext *c);
+
+#endif /* AVCODEC_FLACDSP_H */

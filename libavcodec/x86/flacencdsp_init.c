@@ -1,6 +1,5 @@
 /*
- * Copyright (c) 2020 Loongson Technology Corporation Limited
- * Contributed by Shiyou Yin <yinshiyou-hf@loongson.cn>
+ * Copyright (c) 2014 James Almer
  *
  * This file is part of FFmpeg.
  *
@@ -19,18 +18,21 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVCODEC_LOONGARCH_H264CHROMA_LASX_H
-#define AVCODEC_LOONGARCH_H264CHROMA_LASX_H
+#include "config.h"
+#include "libavutil/attributes.h"
+#include "libavutil/x86/cpu.h"
+#include "libavcodec/flacencdsp.h"
 
-#include <stdint.h>
-#include <stddef.h>
-#include "libavcodec/h264.h"
+void ff_flac_enc_lpc_16_sse4(int32_t *, const int32_t *, int, int, const int32_t *,int);
 
-void ff_put_h264_chroma_mc4_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
-void ff_put_h264_chroma_mc8_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
-void ff_avg_h264_chroma_mc8_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
+av_cold void ff_flacencdsp_init_x86(FLACEncDSPContext *c)
+{
+#if HAVE_X86ASM && CONFIG_GPL
+    int cpu_flags = av_get_cpu_flags();
 
-#endif /* AVCODEC_LOONGARCH_H264CHROMA_LASX_H */
+    if (EXTERNAL_SSE4(cpu_flags)) {
+        if (CONFIG_GPL)
+            c->lpc16_encode = ff_flac_enc_lpc_16_sse4;
+    }
+#endif /* HAVE_X86ASM */
+}
