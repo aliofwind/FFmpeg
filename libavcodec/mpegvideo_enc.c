@@ -313,6 +313,7 @@ av_cold int ff_mpv_encode_init(AVCodecContext *avctx)
     MpegEncContext *s = avctx->priv_data;
     AVCPBProperties *cpb_props;
     int i, ret;
+    int mb_array_size;
 
     mpv_encode_defaults(s);
 
@@ -823,6 +824,12 @@ av_cold int ff_mpv_encode_init(AVCodecContext *avctx)
         !FF_ALLOCZ_TYPED_ARRAY(s->reordered_input_picture, MAX_PICTURE_COUNT))
         return AVERROR(ENOMEM);
 
+    mb_array_size = s->mb_stride * s->mb_height;
+    if (!FF_ALLOCZ_TYPED_ARRAY(s->mc_mb_var, mb_array_size) ||
+        !FF_ALLOCZ_TYPED_ARRAY(s->mb_var, mb_array_size) ||
+        !(s->mb_mean = av_mallocz(mb_array_size)))
+        return AVERROR(ENOMEM);
+
     if (s->noise_reduction) {
         if (!FF_ALLOCZ_TYPED_ARRAY(s->dct_offset, 2))
             return AVERROR(ENOMEM);
@@ -949,6 +956,9 @@ av_cold int ff_mpv_encode_end(AVCodecContext *avctx)
     av_freep(&s->input_picture);
     av_freep(&s->reordered_input_picture);
     av_freep(&s->dct_offset);
+    av_freep(&s->mb_var);
+    av_freep(&s->mc_mb_var);
+    av_freep(&s->mb_mean);
 
     return 0;
 }
@@ -1144,7 +1154,7 @@ static int load_input_picture(MpegEncContext *s, const AVFrame *pic_arg)
     for (i = flush_offset; i < MAX_PICTURE_COUNT /*s->encoding_delay + 1*/; i++)
         s->input_picture[i - flush_offset] = s->input_picture[i];
 
-    s->input_picture[encoding_delay] = (Picture*) pic;
+    s->input_picture[encoding_delay] = pic;
 
     return 0;
 }
@@ -1239,15 +1249,14 @@ static int estimate_best_b_count(MpegEncContext *s)
                FF_LAMBDA_SHIFT;
 
     for (i = 0; i < s->max_b_frames + 2; i++) {
-        Picture pre_input, *pre_input_ptr = i ? s->input_picture[i - 1] :
-                                                s->next_picture_ptr;
-        uint8_t *data[4];
+        const Picture *pre_input_ptr = i ? s->input_picture[i - 1] :
+                                           s->next_picture_ptr;
 
-        if (pre_input_ptr && (!i || s->input_picture[i - 1])) {
-            pre_input = *pre_input_ptr;
+        if (pre_input_ptr) {
+            const uint8_t *data[4];
             memcpy(data, pre_input_ptr->f->data, sizeof(data));
 
-            if (!pre_input.shared && i) {
+            if (!pre_input_ptr->shared && i) {
                 data[0] += INPLACE_OFFSET;
                 data[1] += INPLACE_OFFSET;
                 data[2] += INPLACE_OFFSET;
@@ -1256,17 +1265,17 @@ static int estimate_best_b_count(MpegEncContext *s)
             s->mpvencdsp.shrink[scale](s->tmp_frames[i]->data[0],
                                        s->tmp_frames[i]->linesize[0],
                                        data[0],
-                                       pre_input.f->linesize[0],
+                                       pre_input_ptr->f->linesize[0],
                                        width, height);
             s->mpvencdsp.shrink[scale](s->tmp_frames[i]->data[1],
                                        s->tmp_frames[i]->linesize[1],
                                        data[1],
-                                       pre_input.f->linesize[1],
+                                       pre_input_ptr->f->linesize[1],
                                        width >> 1, height >> 1);
             s->mpvencdsp.shrink[scale](s->tmp_frames[i]->data[2],
                                        s->tmp_frames[i]->linesize[2],
                                        data[2],
-                                       pre_input.f->linesize[2],
+                                       pre_input_ptr->f->linesize[2],
                                        width >> 1, height >> 1);
         }
     }
@@ -1773,11 +1782,10 @@ vbv_retry:
             ff_write_pass1_stats(s);
 
         for (i = 0; i < 4; i++) {
-            s->current_picture_ptr->encoding_error[i] = s->current_picture.encoding_error[i];
-            avctx->error[i] += s->current_picture_ptr->encoding_error[i];
+            avctx->error[i] += s->encoding_error[i];
         }
         ff_side_data_set_encoder_stats(pkt, s->current_picture.f->quality,
-                                       s->current_picture_ptr->encoding_error,
+                                       s->encoding_error,
                                        (avctx->flags&AV_CODEC_FLAG_PSNR) ? MPEGVIDEO_MAX_PLANES : 0,
                                        s->pict_type);
 
@@ -2235,8 +2243,7 @@ static av_always_inline void encode_mb_internal(MpegEncContext *s,
             }
         }
         /* pre quantization */
-        if (s->current_picture.mc_mb_var[s->mb_stride * mb_y + mb_x] <
-                2 * s->qscale * s->qscale) {
+        if (s->mc_mb_var[s->mb_stride * mb_y + mb_x] < 2 * s->qscale * s->qscale) {
             // FIXME optimize
             if (s->mecc.sad[1](NULL, ptr_y, dest_y, wrap_y, 8) < 20 * s->qscale)
                 skip_dct[0] = 1;
@@ -2648,8 +2655,8 @@ static int mb_var_thread(AVCodecContext *c, void *arg){
             varc = (s->mpvencdsp.pix_norm1(pix, s->linesize) -
                     (((unsigned) sum * sum) >> 8) + 500 + 128) >> 8;
 
-            s->current_picture.mb_var [s->mb_stride * mb_y + mb_x] = varc;
-            s->current_picture.mb_mean[s->mb_stride * mb_y + mb_x] = (sum+128)>>8;
+            s->mb_var [s->mb_stride * mb_y + mb_x] = varc;
+            s->mb_mean[s->mb_stride * mb_y + mb_x] = (sum+128)>>8;
             s->me.mb_var_sum_temp    += varc;
         }
     }
@@ -2783,7 +2790,7 @@ static int encode_thread(AVCodecContext *c, void *arg){
         /* note: quant matrix value (8) is implied here */
         s->last_dc[i] = 128 << s->intra_dc_precision;
 
-        s->current_picture.encoding_error[i] = 0;
+        s->encoding_error[i] = 0;
     }
     if(s->codec_id==AV_CODEC_ID_AMV){
         s->last_dc[0] = 128*8/13;
@@ -3361,13 +3368,13 @@ static int encode_thread(AVCodecContext *c, void *arg){
                 if(s->mb_x*16 + 16 > s->width ) w= s->width - s->mb_x*16;
                 if(s->mb_y*16 + 16 > s->height) h= s->height- s->mb_y*16;
 
-                s->current_picture.encoding_error[0] += sse(
+                s->encoding_error[0] += sse(
                     s, s->new_picture->data[0] + s->mb_x*16 + s->mb_y*s->linesize*16,
                     s->dest[0], w, h, s->linesize);
-                s->current_picture.encoding_error[1] += sse(
+                s->encoding_error[1] += sse(
                     s, s->new_picture->data[1] + s->mb_x*8  + s->mb_y*s->uvlinesize*chr_h,
                     s->dest[1], w>>1, h>>s->chroma_y_shift, s->uvlinesize);
-                s->current_picture.encoding_error[2] += sse(
+                s->encoding_error[2] += sse(
                     s, s->new_picture->data[2] + s->mb_x*8  + s->mb_y*s->uvlinesize*chr_h,
                     s->dest[2], w>>1, h>>s->chroma_y_shift, s->uvlinesize);
             }
@@ -3407,9 +3414,9 @@ static void merge_context_after_encode(MpegEncContext *dst, MpegEncContext *src)
     MERGE(i_count);
     MERGE(skip_count);
     MERGE(misc_bits);
-    MERGE(current_picture.encoding_error[0]);
-    MERGE(current_picture.encoding_error[1]);
-    MERGE(current_picture.encoding_error[2]);
+    MERGE(encoding_error[0]);
+    MERGE(encoding_error[1]);
+    MERGE(encoding_error[2]);
 
     if (dst->noise_reduction){
         for(i=0; i<64; i++){
@@ -3561,8 +3568,8 @@ static int encode_picture(MpegEncContext *s, int picture_number)
     for(i=1; i<context_count; i++){
         merge_context_after_me(s, s->thread_context[i]);
     }
-    s->current_picture.mc_mb_var_sum= s->current_picture_ptr->mc_mb_var_sum= s->me.mc_mb_var_sum_temp;
-    s->current_picture.   mb_var_sum= s->current_picture_ptr->   mb_var_sum= s->me.   mb_var_sum_temp;
+    s->mc_mb_var_sum = s->me.mc_mb_var_sum_temp;
+    s->mb_var_sum    = s->me.   mb_var_sum_temp;
     emms_c();
 
     if (s->me.scene_change_score > s->scenechange_threshold &&
@@ -3573,7 +3580,7 @@ static int encode_picture(MpegEncContext *s, int picture_number)
         if(s->msmpeg4_version >= 3)
             s->no_rounding=1;
         ff_dlog(s, "Scene change detected, encoding as I Frame %"PRId64" %"PRId64"\n",
-                s->current_picture.mb_var_sum, s->current_picture.mc_mb_var_sum);
+                s->mb_var_sum, s->mc_mb_var_sum);
     }
 
     if(!s->umvplus){
