@@ -205,20 +205,17 @@ static void yuv2yuvX_ ##opt(const int16_t *filter, int filterSize, \
     int remainder = (dstW % step); \
     int pixelsProcessed = dstW - remainder; \
     if(((uintptr_t)dest) & 15){ \
-        yuv2yuvX_mmx(filter, filterSize, src, dest, dstW, dither, offset); \
+        yuv2yuvX_mmxext(filter, filterSize, src, dest, dstW, dither, offset); \
         return; \
     } \
     if(pixelsProcessed > 0) \
         ff_yuv2yuvX_ ##opt(filter, filterSize - 1, 0, dest - offset, pixelsProcessed + offset, dither, offset); \
     if(remainder > 0){ \
-      ff_yuv2yuvX_mmx(filter, filterSize - 1, pixelsProcessed, dest - offset, pixelsProcessed + remainder + offset, dither, offset); \
+      ff_yuv2yuvX_mmxext(filter, filterSize - 1, pixelsProcessed, dest - offset, pixelsProcessed + remainder + offset, dither, offset); \
     } \
     return; \
 }
 
-#if HAVE_MMX_EXTERNAL
-YUV2YUVX_FUNC_MMX(mmx, 16)
-#endif
 #if HAVE_MMXEXT_EXTERNAL
 YUV2YUVX_FUNC_MMX(mmxext, 16)
 #endif
@@ -628,10 +625,8 @@ switch(c->dstBpc){ \
 
     if (EXTERNAL_AVX2_FAST(cpu_flags) && !(cpu_flags & AV_CPU_FLAG_SLOW_GATHER)) {
         if ((c->srcBpc == 8) && (c->dstBpc <= 14)) {
-            if (c->chrDstW % 16 == 0)
-                ASSIGN_AVX2_SCALE_FUNC(c->hcScale, c->hChrFilterSize);
-            if (c->dstW % 16 == 0)
-                ASSIGN_AVX2_SCALE_FUNC(c->hyScale, c->hLumFilterSize);
+            ASSIGN_AVX2_SCALE_FUNC(c->hcScale, c->hChrFilterSize);
+            ASSIGN_AVX2_SCALE_FUNC(c->hyScale, c->hLumFilterSize);
         }
     }
 

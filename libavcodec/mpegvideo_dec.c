@@ -73,8 +73,6 @@ int ff_mpeg_update_thread_context(AVCodecContext *dst,
         s->bitstream_buffer_size = s->allocated_bitstream_buffer_size = 0;
 
         if (s1->context_initialized) {
-//             s->picture_range_start  += MAX_PICTURE_COUNT;
-//             s->picture_range_end    += MAX_PICTURE_COUNT;
             ff_mpv_idct_init(s);
             if ((err = ff_mpv_common_init(s)) < 0) {
                 memset(s, 0, sizeof(*s));
@@ -91,11 +89,6 @@ int ff_mpeg_update_thread_context(AVCodecContext *dst,
         if ((ret = ff_mpv_common_frame_size_change(s)) < 0)
             return ret;
     }
-
-    s->avctx->coded_height  = s1->avctx->coded_height;
-    s->avctx->coded_width   = s1->avctx->coded_width;
-    s->avctx->width         = s1->avctx->width;
-    s->avctx->height        = s1->avctx->height;
 
     s->quarter_sample       = s1->quarter_sample;
 
