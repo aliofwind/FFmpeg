@@ -26,8 +26,13 @@
 
 #include <stdint.h>
 
+#include "mathops.h"
 #include "opus.h"
+#include "opus_rc.h"
+#include "opus_silk.h"
 #include "opustab.h"
+
+#define ROUND_MULL(a,b,s) (((MUL64(a, b) >> ((s) - 1)) + 1) >> 1)
 
 typedef struct SilkFrame {
     int coded;

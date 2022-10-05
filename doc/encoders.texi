@@ -3362,6 +3362,19 @@ Change these value to reset qsv codec's max/min qp configuration.
 @item @var{low_delay_brc}
 Supported in h264_qsv and hevc_qsv.
 Change this value to reset qsv codec's low_delay_brc configuration.
+
+@item @var{framerate}
+Change this value to reset qsv codec's framerate configuration.
+
+@item @var{bit_rate}
+@item @var{rc_buffer_size}
+@item @var{rc_initial_buffer_occupancy}
+@item @var{rc_max_rate}
+Change these value to reset qsv codec's bitrate control configuration.
+
+@item @var{pic_timing_sei}
+Supported in h264_qsv and hevc_qsv.
+Change this value to reset qsv codec's pic_timing_sei configuration.
 @end table
 
 @subsection H264 options

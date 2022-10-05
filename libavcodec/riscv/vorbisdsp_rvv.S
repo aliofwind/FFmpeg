@@ -18,8 +18,7 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "config.h"
-#include "../libavutil/riscv/asm.S"
+#include "libavutil/riscv/asm.S"
 
 func ff_vorbis_inverse_coupling_rvv, zve32f
         fmv.w.x   ft0, zero
