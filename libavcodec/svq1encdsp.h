@@ -1,8 +1,5 @@
 /*
- * SpeedHQ encoder
- * Copyright (c) 2000, 2001 Fabrice Bellard
- * Copyright (c) 2003 Alex Beregszaszi
- * Copyright (c) 2003-2004 Michael Niedermayer
+ * SVQ1 encoder DSP
  *
  * This file is part of FFmpeg.
  *
@@ -21,25 +18,17 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-/**
- * @file
- * SpeedHQ encoder.
- */
-
-#ifndef AVCODEC_SPEEDHQENC_H
-#define AVCODEC_SPEEDHQENC_H
+#ifndef AVCODEC_SVQ1ENCDSP_H
+#define AVCODEC_SVQ1ENCDSP_H
 
 #include <stdint.h>
 
-#include "mpegvideo.h"
+typedef struct SVQ1EncDSPContext {
+    int (*ssd_int8_vs_int16)(const int8_t *pix1, const int16_t *pix2,
+                             intptr_t size);
+} SVQ1EncDSPContext;
 
-int  ff_speedhq_encode_init(MpegEncContext *s);
-void ff_speedhq_encode_close(MpegEncContext *s);
-void ff_speedhq_encode_mb(MpegEncContext *s, int16_t block[12][64]);
+void ff_svq1enc_init_ppc(SVQ1EncDSPContext *c);
+void ff_svq1enc_init_x86(SVQ1EncDSPContext *c);
 
-void ff_speedhq_encode_picture_header(MpegEncContext *s);
-void ff_speedhq_end_slice(MpegEncContext *s);
-
-int ff_speedhq_mb_y_order_to_mb(int mb_y_order, int mb_height, int *first_in_slice);
-
-#endif /* AVCODEC_SPEEDHQENC_H */
+#endif /* AVCODEC_SVQ1ENCDSP_H */
