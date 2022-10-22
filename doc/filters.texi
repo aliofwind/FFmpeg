@@ -1534,6 +1534,7 @@ It accepts the following values:
 @item parzen
 @item poisson
 @item bohman
+@item kaiser
 @end table
 Default is @code{hann}.
 
@@ -2960,6 +2961,7 @@ It accepts the following values:
 @item parzen
 @item poisson
 @item bohman
+@item kaiser
 @end table
 Default is @code{hann}.
 
@@ -6743,6 +6745,7 @@ It accepts the following values:
 @item parzen
 @item poisson
 @item bohman
+@item kaiser
 @end table
 Default is @code{hann}.
 
@@ -16620,6 +16623,10 @@ video streams.
 Set which planes will be processed as bitmap, unprocessed planes will be
 copied from second stream.
 By default value 0xf, all planes will be processed.
+
+@item mode
+Set mode of filter operation. Can be @code{abs} or @code{diff}.
+Default is @code{abs}.
 @end table
 
 @subsection Commands
@@ -29255,6 +29262,7 @@ It accepts the following values:
 @item parzen
 @item poisson
 @item bohman
+@item kaiser
 @end table
 Default is @code{hanning}.
 
@@ -29341,6 +29349,7 @@ It accepts the following values:
 @item parzen
 @item poisson
 @item bohman
+@item kaiser
 @end table
 
 Default value is @code{hann}.
@@ -29505,6 +29514,7 @@ It accepts the following values:
 @item parzen
 @item poisson
 @item bohman
+@item kaiser
 @end table
 
 Default value is @code{hann}.
@@ -29702,6 +29712,7 @@ It accepts the following values:
 @item parzen
 @item poisson
 @item bohman
+@item kaiser
 @end table
 Default value is @code{hann}.
 
