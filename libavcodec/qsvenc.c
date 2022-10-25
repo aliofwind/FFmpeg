@@ -1622,25 +1622,16 @@ int ff_qsv_enc_init(AVCodecContext *avctx, QSVEncContext *q)
     return 0;
 }
 
-static void free_encoder_ctrl_payloads(mfxEncodeCtrl* enc_ctrl)
+static void free_encoder_ctrl(mfxEncodeCtrl* enc_ctrl)
 {
     if (enc_ctrl) {
-        int i;
-        for (i = 0; i < enc_ctrl->NumPayload && i < QSV_MAX_ENC_PAYLOAD; i++) {
+        for (int i = 0; i < enc_ctrl->NumPayload && i < QSV_MAX_ENC_PAYLOAD; i++)
             av_freep(&enc_ctrl->Payload[i]);
-        }
-        enc_ctrl->NumPayload = 0;
-    }
-}
 
-static void free_encoder_ctrl_extparam(mfxEncodeCtrl* enc_ctrl)
-{
-    if (enc_ctrl) {
-        int i;
-        for (i = 0; i < enc_ctrl->NumExtParam && i < QSV_MAX_ENC_EXTPARAM; i++) {
-            if (enc_ctrl->ExtParam[i])
-                av_freep(&(enc_ctrl->ExtParam[i]));
-        }
+        for (int i = 0; i < enc_ctrl->NumExtParam && i < QSV_MAX_ENC_EXTPARAM; i++)
+            av_freep(&enc_ctrl->ExtParam[i]);
+
+        enc_ctrl->NumPayload = 0;
         enc_ctrl->NumExtParam = 0;
     }
 }
@@ -1650,8 +1641,7 @@ static void clear_unused_frames(QSVEncContext *q)
     QSVFrame *cur = q->work_frames;
     while (cur) {
         if (cur->used && !cur->surface.Data.Locked) {
-            free_encoder_ctrl_payloads(&cur->enc_ctrl);
-            free_encoder_ctrl_extparam(&cur->enc_ctrl);
+            free_encoder_ctrl(&cur->enc_ctrl);
             //do not reuse enc_ctrl from previous frame
             memset(&cur->enc_ctrl, 0, sizeof(cur->enc_ctrl));
             cur->enc_ctrl.Payload = cur->payloads;
@@ -2281,8 +2271,8 @@ static int encode_frame(AVCodecContext *avctx, QSVEncContext *q,
         pkt.bs->ExtParam = enc_buf;
     }
 
-    if (q->set_encode_ctrl_cb) {
-        q->set_encode_ctrl_cb(avctx, frame, &qsv_frame->enc_ctrl);
+    if (q->set_encode_ctrl_cb && enc_ctrl) {
+        q->set_encode_ctrl_cb(avctx, frame, enc_ctrl);
     }
 
     if ((avctx->codec_id == AV_CODEC_ID_H264 ||
@@ -2419,8 +2409,7 @@ int ff_qsv_enc_close(AVCodecContext *avctx, QSVEncContext *q)
     while (cur) {
         q->work_frames = cur->next;
         av_frame_free(&cur->frame);
-        free_encoder_ctrl_extparam(&cur->enc_ctrl);
-        free_encoder_ctrl_payloads(&cur->enc_ctrl);
+        free_encoder_ctrl(&cur->enc_ctrl);
         av_freep(&cur);
         cur = q->work_frames;
     }
