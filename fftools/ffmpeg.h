@@ -441,10 +441,6 @@ typedef struct InputFile {
     int eof_reached;      /* true if eof reached */
     int eagain;           /* true if last read attempt returned EAGAIN */
     int ist_index;        /* index of first stream in input_streams */
-    int loop;             /* set number of times input stream should be looped */
-    int64_t duration;     /* actual duration of the longest stream in a file
-                             at the moment when looping happens */
-    AVRational time_base; /* time base of the duration */
     int64_t input_ts_offset;
     int input_sync_ref;
 
@@ -458,15 +454,9 @@ typedef struct InputFile {
     int64_t recording_time;
     int nb_streams;       /* number of stream that ffmpeg is aware of; may be different
                              from ctx.nb_streams if new streams appear during av_read_frame() */
-    int nb_streams_warn;  /* number of streams that the user was warned of */
     int rate_emu;
     float readrate;
     int accurate_seek;
-
-    AVThreadMessageQueue *in_thread_queue;
-    pthread_t thread;           /* thread reading from this file */
-    int non_blocking;           /* reading packets from the thread should not block */
-    int thread_queue_size;      /* maximum number of queued packets */
 
     /* when looping the input file, this queue is used by decoders to report
      * the last frame duration back to the demuxer thread */
@@ -689,6 +679,8 @@ extern int input_stream_potentially_available;
 extern int ignore_unknown_streams;
 extern int copy_unknown_streams;
 
+extern int recast_media;
+
 #if FFMPEG_OPT_PSNR
 extern int do_psnr;
 #endif
@@ -756,6 +748,9 @@ int64_t of_filesize(OutputFile *of);
 AVChapter * const *
 of_get_chapters(OutputFile *of, unsigned int *nb_chapters);
 
+int ifile_open(OptionsContext *o, const char *filename);
+void ifile_close(InputFile **f);
+
 /**
  * Get next input packet from the demuxer.
  *
@@ -767,8 +762,6 @@ of_get_chapters(OutputFile *of, unsigned int *nb_chapters);
  * - a negative error code on failure
  */
 int ifile_get_packet(InputFile *f, AVPacket **pkt);
-int init_input_threads(void);
-void free_input_threads(void);
 
 #define SPECIFIER_OPT_FMT_str  "%s"
 #define SPECIFIER_OPT_FMT_i    "%i"

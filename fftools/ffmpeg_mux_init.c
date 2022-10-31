@@ -1062,6 +1062,47 @@ loop_end:
     }
 }
 
+static void create_streams(Muxer *mux, OptionsContext *o)
+{
+    int auto_disable_v = o->video_disable;
+    int auto_disable_a = o->audio_disable;
+    int auto_disable_s = o->subtitle_disable;
+    int auto_disable_d = o->data_disable;
+
+    /* create streams for all unlabeled output pads */
+    for (int i = 0; i < nb_filtergraphs; i++) {
+        FilterGraph *fg = filtergraphs[i];
+        for (int j = 0; j < fg->nb_outputs; j++) {
+            OutputFilter *ofilter = fg->outputs[j];
+
+            if (!ofilter->out_tmp || ofilter->out_tmp->name)
+                continue;
+
+            switch (ofilter->type) {
+            case AVMEDIA_TYPE_VIDEO:    auto_disable_v = 1; break;
+            case AVMEDIA_TYPE_AUDIO:    auto_disable_a = 1; break;
+            case AVMEDIA_TYPE_SUBTITLE: auto_disable_s = 1; break;
+            }
+            init_output_filter(ofilter, o, mux);
+        }
+    }
+
+    if (!o->nb_stream_maps) {
+        /* pick the "best" stream of each type */
+        if (!auto_disable_v)
+            map_auto_video(mux, o);
+        if (!auto_disable_a)
+            map_auto_audio(mux, o);
+        if (!auto_disable_s)
+            map_auto_subtitle(mux, o);
+        if (!auto_disable_d)
+            map_auto_data(mux, o);
+    } else {
+        for (int i = 0; i < o->nb_stream_maps; i++)
+            map_manual(mux, o, &o->stream_maps[i]);
+    }
+}
+
 static int setup_sync_queues(Muxer *mux, AVFormatContext *oc, int64_t buf_size_us)
 {
     OutputFile *of = &mux->of;
@@ -1272,7 +1313,7 @@ static void of_add_programs(AVFormatContext *oc, const OptionsContext *o)
  * @param index for type c/p, chapter/program index is written here
  * @param stream_spec for type s, the stream specifier is written here
  */
-static void parse_meta_type(char *arg, char *type, int *index, const char **stream_spec)
+static void parse_meta_type(const char *arg, char *type, int *index, const char **stream_spec)
 {
     if (*arg) {
         *type = *arg;
@@ -1453,7 +1494,7 @@ static int copy_chapters(InputFile *ifile, OutputFile *ofile, AVFormatContext *o
     return 0;
 }
 
-static int copy_metadata(char *outspec, char *inspec, AVFormatContext *oc, AVFormatContext *ic, OptionsContext *o)
+static int copy_metadata(const char *outspec, const char *inspec, AVFormatContext *oc, AVFormatContext *ic, OptionsContext *o)
 {
     AVDictionary **meta_in = NULL;
     AVDictionary **meta_out = NULL;
@@ -1543,6 +1584,71 @@ static int copy_metadata(char *outspec, char *inspec, AVFormatContext *oc, AVFor
     return 0;
 }
 
+static void copy_meta(Muxer *mux, OptionsContext *o)
+{
+    OutputFile      *of = &mux->of;
+    AVFormatContext *oc = mux->fc;
+    int chapters_input_file = o->chapters_input_file;
+
+    /* copy metadata */
+    for (int i = 0; i < o->nb_metadata_map; i++) {
+        char *p;
+        int in_file_index = strtol(o->metadata_map[i].u.str, &p, 0);
+
+        if (in_file_index >= nb_input_files) {
+            av_log(NULL, AV_LOG_FATAL, "Invalid input file index %d while processing metadata maps\n", in_file_index);
+            exit_program(1);
+        }
+        copy_metadata(o->metadata_map[i].specifier, *p ? p + 1 : p, oc,
+                      in_file_index >= 0 ?
+                      input_files[in_file_index]->ctx : NULL, o);
+    }
+
+    /* copy chapters */
+    if (chapters_input_file >= nb_input_files) {
+        if (chapters_input_file == INT_MAX) {
+            /* copy chapters from the first input file that has them*/
+            chapters_input_file = -1;
+            for (int i = 0; i < nb_input_files; i++)
+                if (input_files[i]->ctx->nb_chapters) {
+                    chapters_input_file = i;
+                    break;
+                }
+        } else {
+            av_log(NULL, AV_LOG_FATAL, "Invalid input file index %d in chapter mapping.\n",
+                   chapters_input_file);
+            exit_program(1);
+        }
+    }
+    if (chapters_input_file >= 0)
+        copy_chapters(input_files[chapters_input_file], of, oc,
+                      !o->metadata_chapters_manual);
+
+    /* copy global metadata by default */
+    if (!o->metadata_global_manual && nb_input_files){
+        av_dict_copy(&oc->metadata, input_files[0]->ctx->metadata,
+                     AV_DICT_DONT_OVERWRITE);
+        if (of->recording_time != INT64_MAX)
+            av_dict_set(&oc->metadata, "duration", NULL, 0);
+        av_dict_set(&oc->metadata, "creation_time", NULL, 0);
+        av_dict_set(&oc->metadata, "company_name", NULL, 0);
+        av_dict_set(&oc->metadata, "product_name", NULL, 0);
+        av_dict_set(&oc->metadata, "product_version", NULL, 0);
+    }
+    if (!o->metadata_streams_manual)
+        for (int i = 0; i < of->nb_streams; i++) {
+            OutputStream *ost = of->streams[i];
+            InputStream *ist;
+            if (ost->source_index < 0)         /* this is true e.g. for attached files */
+                continue;
+            ist = input_streams[ost->source_index];
+            av_dict_copy(&ost->st->metadata, ist->st->metadata, AV_DICT_DONT_OVERWRITE);
+            if (ost->enc_ctx) {
+                av_dict_set(&ost->st->metadata, "encoder", NULL, 0);
+            }
+        }
+}
+
 static int set_dispositions(OutputFile *of, AVFormatContext *ctx)
 {
     int nb_streams[AVMEDIA_TYPE_NB]   = { 0 };
@@ -1613,23 +1719,26 @@ int of_open(OptionsContext *o, const char *filename)
 {
     Muxer *mux;
     AVFormatContext *oc;
-    int i, j, err;
+    int err;
     OutputFile *of;
     AVDictionary *unused_opts = NULL;
     const AVDictionaryEntry *e = NULL;
 
-    if (o->stop_time != INT64_MAX && o->recording_time != INT64_MAX) {
-        o->stop_time = INT64_MAX;
+    int64_t recording_time = o->recording_time;
+    int64_t stop_time      = o->stop_time;
+
+    if (stop_time != INT64_MAX && recording_time != INT64_MAX) {
+        stop_time = INT64_MAX;
         av_log(NULL, AV_LOG_WARNING, "-t and -to cannot be used together; using -t.\n");
     }
 
-    if (o->stop_time != INT64_MAX && o->recording_time == INT64_MAX) {
+    if (stop_time != INT64_MAX && recording_time == INT64_MAX) {
         int64_t start_time = o->start_time == AV_NOPTS_VALUE ? 0 : o->start_time;
-        if (o->stop_time <= start_time) {
+        if (stop_time <= start_time) {
             av_log(NULL, AV_LOG_ERROR, "-to value smaller than -ss; aborting.\n");
             exit_program(1);
         } else {
-            o->recording_time = o->stop_time - start_time;
+            recording_time = stop_time - start_time;
         }
     }
 
@@ -1637,7 +1746,7 @@ int of_open(OptionsContext *o, const char *filename)
     of  = &mux->of;
 
     of->index          = nb_output_files - 1;
-    of->recording_time = o->recording_time;
+    of->recording_time = recording_time;
     of->start_time     = o->start_time;
     of->shortest       = o->shortest;
 
@@ -1659,8 +1768,8 @@ int of_open(OptionsContext *o, const char *filename)
         want_sdp = 0;
 
     of->format = oc->oformat;
-    if (o->recording_time != INT64_MAX)
-        oc->duration = o->recording_time;
+    if (recording_time != INT64_MAX)
+        oc->duration = recording_time;
 
     oc->interrupt_callback = int_cb;
 
@@ -1672,38 +1781,8 @@ int of_open(OptionsContext *o, const char *filename)
                                            AVFMT_FLAG_BITEXACT);
     }
 
-    /* create streams for all unlabeled output pads */
-    for (i = 0; i < nb_filtergraphs; i++) {
-        FilterGraph *fg = filtergraphs[i];
-        for (j = 0; j < fg->nb_outputs; j++) {
-            OutputFilter *ofilter = fg->outputs[j];
-
-            if (!ofilter->out_tmp || ofilter->out_tmp->name)
-                continue;
-
-            switch (ofilter->type) {
-            case AVMEDIA_TYPE_VIDEO:    o->video_disable    = 1; break;
-            case AVMEDIA_TYPE_AUDIO:    o->audio_disable    = 1; break;
-            case AVMEDIA_TYPE_SUBTITLE: o->subtitle_disable = 1; break;
-            }
-            init_output_filter(ofilter, o, mux);
-        }
-    }
-
-    if (!o->nb_stream_maps) {
-        /* pick the "best" stream of each type */
-        if (!o->video_disable)
-            map_auto_video(mux, o);
-        if (!o->audio_disable)
-            map_auto_audio(mux, o);
-        if (!o->subtitle_disable)
-            map_auto_subtitle(mux, o);
-        if (!o->data_disable)
-            map_auto_data(mux, o);
-    } else {
-        for (int i = 0; i < o->nb_stream_maps; i++)
-            map_manual(mux, o, &o->stream_maps[i]);
-    }
+    /* create all output streams for this file */
+    create_streams(mux, o);
 
     of_add_attachments(mux, o);
 
@@ -1849,63 +1928,8 @@ int of_open(OptionsContext *o, const char *filename)
     }
     oc->max_delay = (int)(o->mux_max_delay * AV_TIME_BASE);
 
-    /* copy metadata */
-    for (i = 0; i < o->nb_metadata_map; i++) {
-        char *p;
-        int in_file_index = strtol(o->metadata_map[i].u.str, &p, 0);
-
-        if (in_file_index >= nb_input_files) {
-            av_log(NULL, AV_LOG_FATAL, "Invalid input file index %d while processing metadata maps\n", in_file_index);
-            exit_program(1);
-        }
-        copy_metadata(o->metadata_map[i].specifier, *p ? p + 1 : p, oc,
-                      in_file_index >= 0 ?
-                      input_files[in_file_index]->ctx : NULL, o);
-    }
-
-    /* copy chapters */
-    if (o->chapters_input_file >= nb_input_files) {
-        if (o->chapters_input_file == INT_MAX) {
-            /* copy chapters from the first input file that has them*/
-            o->chapters_input_file = -1;
-            for (i = 0; i < nb_input_files; i++)
-                if (input_files[i]->ctx->nb_chapters) {
-                    o->chapters_input_file = i;
-                    break;
-                }
-        } else {
-            av_log(NULL, AV_LOG_FATAL, "Invalid input file index %d in chapter mapping.\n",
-                   o->chapters_input_file);
-            exit_program(1);
-        }
-    }
-    if (o->chapters_input_file >= 0)
-        copy_chapters(input_files[o->chapters_input_file], of, oc,
-                      !o->metadata_chapters_manual);
-
-    /* copy global metadata by default */
-    if (!o->metadata_global_manual && nb_input_files){
-        av_dict_copy(&oc->metadata, input_files[0]->ctx->metadata,
-                     AV_DICT_DONT_OVERWRITE);
-        if(o->recording_time != INT64_MAX)
-            av_dict_set(&oc->metadata, "duration", NULL, 0);
-        av_dict_set(&oc->metadata, "creation_time", NULL, 0);
-        av_dict_set(&oc->metadata, "company_name", NULL, 0);
-        av_dict_set(&oc->metadata, "product_name", NULL, 0);
-        av_dict_set(&oc->metadata, "product_version", NULL, 0);
-    }
-    if (!o->metadata_streams_manual)
-        for (int i = 0; i < of->nb_streams; i++) {
-            OutputStream *ost = of->streams[i];
-            InputStream *ist;
-            if (ost->source_index < 0)         /* this is true e.g. for attached files */
-                continue;
-            ist = input_streams[ost->source_index];
-            av_dict_copy(&ost->st->metadata, ist->st->metadata, AV_DICT_DONT_OVERWRITE);
-            if (ost->enc_ctx) {
-                av_dict_set(&ost->st->metadata, "encoder", NULL, 0);
-            }
-        }
+    /* copy metadata and chapters from input files */
+    copy_meta(mux, o);
 
     of_add_programs(oc, o);
     of_add_metadata(of, oc, o);

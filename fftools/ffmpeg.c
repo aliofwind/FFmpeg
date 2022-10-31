@@ -555,11 +555,9 @@ static void ffmpeg_cleanup(int ret)
     for (i = 0; i < nb_output_files; i++)
         of_close(&output_files[i]);
 
-    free_input_threads();
-    for (i = 0; i < nb_input_files; i++) {
-        avformat_close_input(&input_files[i]->ctx);
-        av_freep(&input_files[i]);
-    }
+    for (i = 0; i < nb_input_files; i++)
+        ifile_close(&input_files[i]);
+
     for (i = 0; i < nb_input_streams; i++) {
         InputStream *ist = input_streams[i];
 
@@ -3912,9 +3910,6 @@ static int transcode(void)
 
     timer_start = av_gettime_relative();
 
-    if ((ret = init_input_threads()) < 0)
-        goto fail;
-
     while (!received_sigterm) {
         int64_t cur_time= av_gettime_relative();
 
@@ -3938,7 +3933,6 @@ static int transcode(void)
         /* dump report by using the output first video and audio streams */
         print_report(0, timer_start, cur_time);
     }
-    free_input_threads();
 
     /* at the end of stream, we must flush the decoder buffers */
     for (i = 0; i < nb_input_streams; i++) {
@@ -3991,8 +3985,6 @@ static int transcode(void)
     ret = 0;
 
  fail:
-    free_input_threads();
-
     return ret;
 }
 
