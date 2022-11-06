@@ -1813,7 +1813,7 @@ static void do_streamcopy(InputStream *ist, OutputStream *ost, const AVPacket *p
         start_time = 0;
         if (copy_ts) {
             start_time += f->start_time != AV_NOPTS_VALUE ? f->start_time : 0;
-            start_time += start_at_zero ? 0 : f->ctx->start_time;
+            start_time += start_at_zero ? 0 : f->start_time_effective;
         }
         if (ist->pts >= f->recording_time + start_time) {
             close_output_stream(ost);
@@ -3190,28 +3190,6 @@ static int transcode_init(void)
         if (ifile->readrate || ifile->rate_emu)
             for (j = 0; j < ifile->nb_streams; j++)
                 input_streams[j + ifile->ist_index]->start = av_gettime_relative();
-    }
-
-    // Correct starttime based on the enabled streams
-    for (i = 0; i < nb_input_files; i++) {
-        InputFile       *ifile = input_files[i];
-        AVFormatContext    *is = ifile->ctx;
-        int64_t new_start_time = INT64_MAX;
-
-        if (is->start_time == AV_NOPTS_VALUE ||
-            !(is->iformat->flags & AVFMT_TS_DISCONT))
-            continue;
-
-        for (int j = 0; j < is->nb_streams; j++) {
-            AVStream *st = is->streams[j];
-            if(st->discard == AVDISCARD_ALL || st->start_time == AV_NOPTS_VALUE)
-                continue;
-            new_start_time = FFMIN(new_start_time, av_rescale_q(st->start_time, st->time_base, AV_TIME_BASE_Q));
-        }
-        if (new_start_time > is->start_time) {
-            av_log(is, AV_LOG_VERBOSE, "Correcting start time by %"PRId64"\n", new_start_time - is->start_time);
-            ifile->ts_offset = -new_start_time;
-        }
     }
 
     /* init input streams */

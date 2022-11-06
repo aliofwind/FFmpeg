@@ -41,6 +41,7 @@
 #include "svq1.h"
 #include "svq1encdsp.h"
 #include "svq1enc_cb.h"
+#include "version.h"
 
 #include "libavutil/avassert.h"
 #include "libavutil/frame.h"
@@ -239,6 +240,11 @@ static int encode_block(SVQ1EncContext *s, uint8_t *src, uint8_t *ref,
             }
         }
     }
+
+    if (best_mean == -128)
+        best_mean = -127;
+    else if (best_mean == 128)
+        best_mean = 127;
 
     split = 0;
     if (best_score > threshold && level) {
@@ -567,6 +573,19 @@ static av_cold int svq1_encode_end(AVCodecContext *avctx)
     return 0;
 }
 
+static av_cold int write_ident(AVCodecContext *avctx, const char *ident)
+{
+    int size = strlen(ident);
+    avctx->extradata = av_malloc(size + 8);
+    if (!avctx->extradata)
+        return AVERROR(ENOMEM);
+    AV_WB32(avctx->extradata, size + 8);
+    AV_WL32(avctx->extradata + 4, MKTAG('S', 'V', 'Q', '1'));
+    memcpy(avctx->extradata + 8, ident, size);
+    avctx->extradata_size = size + 8;
+    return 0;
+}
+
 static av_cold int svq1_encode_init(AVCodecContext *avctx)
 {
     SVQ1EncContext *const s = avctx->priv_data;
@@ -627,7 +646,7 @@ static av_cold int svq1_encode_init(AVCodecContext *avctx)
 
     ff_h263_encode_init(&s->m); // mv_penalty
 
-    return 0;
+    return write_ident(avctx, s->avctx->flags & AV_CODEC_FLAG_BITEXACT ? "Lavc" : LIBAVCODEC_IDENT);
 }
 
 static int svq1_encode_frame(AVCodecContext *avctx, AVPacket *pkt,
