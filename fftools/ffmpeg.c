@@ -612,7 +612,7 @@ static OutputStream *ost_iter(OutputStream *prev)
 
     for (; of_idx < nb_output_files; of_idx++) {
         OutputFile *of = output_files[of_idx];
-        for (; ost_idx < of->nb_streams; ost_idx++)
+        if (ost_idx < of->nb_streams)
             return of->streams[ost_idx];
 
         ost_idx = 0;
@@ -1206,14 +1206,6 @@ static void do_video_out(OutputFile *of,
         }
     }
 
-    /*
-     * For video, number of frames in == number of packets out.
-     * But there may be reordering, so we can't throw away frames on encoder
-     * flush, we need to limit them here, before they go into encoder.
-     */
-    nb_frames = FFMIN(nb_frames, ost->max_frames - ost->vsync_frame_number);
-    nb0_frames = FFMIN(nb0_frames, nb_frames);
-
     memmove(ost->last_nb0_frames + 1,
             ost->last_nb0_frames,
             sizeof(ost->last_nb0_frames[0]) * (FF_ARRAY_ELEMS(ost->last_nb0_frames) - 1));
@@ -1262,7 +1254,9 @@ static void do_video_out(OutputFile *of,
         in_picture->pict_type = forced_kf_apply(ost, in_picture, i);
 
         ret = submit_encode_frame(of, ost, in_picture);
-        if (ret < 0 && ret != AVERROR_EOF)
+        if (ret == AVERROR_EOF)
+            break;
+        else if (ret < 0)
             exit_program(1);
 
         ost->next_pts++;

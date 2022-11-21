@@ -34,6 +34,7 @@
 #include "libavutil/imgutils.h"
 #include "libavutil/mem.h"
 #include "libavutil/pixdesc.h"
+#include "libavutil/mathematics.h"
 #include "atsc_a53.h"
 #include "encode.h"
 #include "internal.h"
@@ -81,6 +82,8 @@ const AVCodecHWConfigInternal *const ff_nvenc_hw_configs[] = {
 #define IS_10BIT(pix_fmt)  (pix_fmt == AV_PIX_FMT_P010      || \
                             pix_fmt == AV_PIX_FMT_P016      || \
                             pix_fmt == AV_PIX_FMT_YUV444P16 || \
+                            pix_fmt == AV_PIX_FMT_X2RGB10   || \
+                            pix_fmt == AV_PIX_FMT_X2BGR10   || \
                             pix_fmt == AV_PIX_FMT_GBRP16)
 
 #define IS_YUV444(pix_fmt) (pix_fmt == AV_PIX_FMT_YUV444P   || \
@@ -1374,8 +1377,8 @@ static av_cold int nvenc_setup_av1_config(AVCodecContext *avctx)
     }
 
     if (IS_YUV444(ctx->data_pix_fmt)) {
-        cc->profileGUID = NV_ENC_AV1_PROFILE_HIGH_GUID;
-        avctx->profile  = FF_PROFILE_AV1_HIGH;
+        av_log(avctx, AV_LOG_ERROR, "AV1 High Profile not supported, required for 4:4:4 encoding\n");
+        return AVERROR(ENOTSUP);
     } else {
         cc->profileGUID = NV_ENC_AV1_PROFILE_MAIN_GUID;
         avctx->profile  = FF_PROFILE_AV1_MAIN;
@@ -1453,6 +1456,25 @@ static void compute_dar(AVCodecContext *avctx, int *dw, int *dh) {
 
     sw = avctx->width;
     sh = avctx->height;
+
+#if CONFIG_AV1_NVENC_ENCODER
+    if (avctx->codec->id == AV_CODEC_ID_AV1) {
+        /* For AV1 we actually need to calculate the render width/height, not the dar */
+        if (avctx->sample_aspect_ratio.num > 0 && avctx->sample_aspect_ratio.den > 0
+            && avctx->sample_aspect_ratio.num != avctx->sample_aspect_ratio.den)
+        {
+            if (avctx->sample_aspect_ratio.num > avctx->sample_aspect_ratio.den) {
+                sw = av_rescale(sw, avctx->sample_aspect_ratio.num, avctx->sample_aspect_ratio.den);
+            } else {
+                sh = av_rescale(sh, avctx->sample_aspect_ratio.den, avctx->sample_aspect_ratio.num);
+            }
+        }
+
+        *dw = sw;
+        *dh = sh;
+        return;
+    }
+#endif
 
     if (avctx->sample_aspect_ratio.num > 0 && avctx->sample_aspect_ratio.den > 0) {
         sw *= avctx->sample_aspect_ratio.num;
@@ -1761,7 +1783,8 @@ static av_cold int nvenc_setup_extradata(AVCodecContext *avctx)
 
     NVENCSTATUS nv_status;
     uint32_t outSize = 0;
-    char tmpHeader[256];
+    char tmpHeader[NV_MAX_SEQ_HDR_LEN];
+
     NV_ENC_SEQUENCE_PARAM_PAYLOAD payload = { 0 };
     payload.version = NV_ENC_SEQUENCE_PARAM_PAYLOAD_VER;
 

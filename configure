@@ -3399,6 +3399,7 @@ libx264_encoder_select="atsc_a53"
 libx264rgb_encoder_deps="libx264"
 libx264rgb_encoder_select="libx264_encoder"
 libx265_encoder_deps="libx265"
+libx265_encoder_select="atsc_a53"
 libxavs_encoder_deps="libxavs"
 libxavs2_encoder_deps="libxavs2"
 libxvid_encoder_deps="libxvid"
@@ -3670,8 +3671,6 @@ elbg_filter_deps="avcodec"
 eq_filter_deps="gpl"
 erosion_opencl_filter_deps="opencl"
 find_rect_filter_deps="avcodec avformat gpl"
-firequalizer_filter_deps="avcodec"
-firequalizer_filter_select="rdft"
 flip_vulkan_filter_deps="vulkan spirv_compiler"
 flite_filter_deps="libflite"
 framerate_filter_select="scene_sad"
@@ -3735,8 +3734,6 @@ select_filter_select="scene_sad"
 sharpness_vaapi_filter_deps="vaapi"
 showcqt_filter_deps="avformat swscale"
 showcqt_filter_suggest="libfontconfig libfreetype"
-showspatial_filter_deps="avcodec"
-showspatial_filter_select="fft"
 signature_filter_deps="gpl avcodec avformat"
 smartblur_filter_deps="gpl swscale"
 sobel_opencl_filter_deps="opencl"
@@ -6456,7 +6453,7 @@ fi
 
 if ! disabled ffnvcodec; then
     ffnv_hdr_list="ffnvcodec/nvEncodeAPI.h ffnvcodec/dynlink_cuda.h ffnvcodec/dynlink_cuviddec.h ffnvcodec/dynlink_nvcuvid.h"
-    check_pkg_config ffnvcodec "ffnvcodec >= 12.0.11.0" "$ffnv_hdr_list" "" || \
+    check_pkg_config ffnvcodec "ffnvcodec >= 12.0.16.0" "$ffnv_hdr_list" "" || \
       check_pkg_config ffnvcodec "ffnvcodec >= 11.1.5.2 ffnvcodec < 12.0" "$ffnv_hdr_list" "" || \
       check_pkg_config ffnvcodec "ffnvcodec >= 11.0.10.2 ffnvcodec < 11.1" "$ffnv_hdr_list" "" || \
       check_pkg_config ffnvcodec "ffnvcodec >= 8.1.24.14 ffnvcodec < 8.2" "$ffnv_hdr_list" ""
@@ -6726,7 +6723,7 @@ enabled libx264           && require_pkg_config libx264 x264 "stdint.h x264.h" x
                              require_cpp_condition libx264 x264.h "X264_BUILD >= 158"; } &&
                              check_cpp_condition libx262 x264.h "X264_MPEG2"
 enabled libx265           && require_pkg_config libx265 x265 x265.h x265_api_get &&
-                             require_cpp_condition libx265 x265.h "X265_BUILD >= 70"
+                             require_cpp_condition libx265 x265.h "X265_BUILD >= 89"
 enabled libxavs           && require libxavs "stdint.h xavs.h" xavs_encoder_encode "-lxavs $pthreads_extralibs $libm_extralibs"
 enabled libxavs2          && require_pkg_config libxavs2 "xavs2 >= 1.3.0" "stdint.h xavs2.h" xavs2_api_get
 enabled libxvid           && require libxvid xvid.h xvid_global -lxvidcore
@@ -7465,7 +7462,6 @@ enabled cover_rect_filter   && prepend avfilter_deps "avformat avcodec"
 enabled ebur128_filter && enabled swresample && prepend avfilter_deps "swresample"
 enabled elbg_filter         && prepend avfilter_deps "avcodec"
 enabled find_rect_filter    && prepend avfilter_deps "avformat avcodec"
-enabled firequalizer_filter && prepend avfilter_deps "avcodec"
 enabled mcdeint_filter      && prepend avfilter_deps "avcodec"
 enabled movie_filter    && prepend avfilter_deps "avformat avcodec"
 enabled pan_filter          && prepend avfilter_deps "swresample"

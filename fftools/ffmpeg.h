@@ -149,9 +149,6 @@ typedef struct OptionsContext {
     AudioChannelMap *audio_channel_maps; /* one info entry per -map_channel */
     int           nb_audio_channel_maps; /* number of (valid) -map_channel settings */
 #endif
-    int metadata_global_manual;
-    int metadata_streams_manual;
-    int metadata_chapters_manual;
     const char **attachments;
     int       nb_attachments;
 
@@ -511,7 +508,6 @@ typedef struct OutputStream {
     AVRational enc_timebase;
 
     AVCodecContext *enc_ctx;
-    int64_t max_frames;
     AVFrame *filtered_frame;
     AVFrame *last_frame;
     AVFrame *sq_frame;
@@ -678,7 +674,6 @@ extern HWDevice *filter_hw_device;
 extern unsigned nb_output_dumped;
 extern int main_return_code;
 
-extern int input_stream_potentially_available;
 extern int ignore_unknown_streams;
 extern int copy_unknown_streams;
 
@@ -698,7 +693,7 @@ void assert_avoptions(AVDictionary *m);
 
 void assert_file_overwrite(const char *filename);
 char *file_read(const char *filename);
-AVDictionary *strip_specifiers(AVDictionary *dict);
+AVDictionary *strip_specifiers(const AVDictionary *dict);
 const AVCodec *find_codec_or_die(const char *name, enum AVMediaType type, int encoder);
 int parse_and_set_vsync(const char *arg, int *vsync_var, int file_idx, int st_idx, int is_global);
 
@@ -732,7 +727,7 @@ int hwaccel_decode_init(AVCodecContext *avctx);
  */
 int of_stream_init(OutputFile *of, OutputStream *ost);
 int of_write_trailer(OutputFile *of);
-int of_open(OptionsContext *o, const char *filename);
+int of_open(const OptionsContext *o, const char *filename);
 void of_close(OutputFile **pof);
 
 /*
@@ -751,7 +746,7 @@ int64_t of_filesize(OutputFile *of);
 AVChapter * const *
 of_get_chapters(OutputFile *of, unsigned int *nb_chapters);
 
-int ifile_open(OptionsContext *o, const char *filename);
+int ifile_open(const OptionsContext *o, const char *filename);
 void ifile_close(InputFile **f);
 
 /**
