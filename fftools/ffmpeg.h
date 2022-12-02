@@ -437,7 +437,6 @@ typedef struct InputFile {
     AVFormatContext *ctx;
     int eof_reached;      /* true if eof reached */
     int eagain;           /* true if last read attempt returned EAGAIN */
-    int ist_index;        /* index of first stream in input_streams */
     int64_t input_ts_offset;
     int input_sync_ref;
     /**
@@ -452,8 +451,13 @@ typedef struct InputFile {
     int64_t last_ts;
     int64_t start_time;   /* user-specified start time in AV_TIME_BASE or AV_NOPTS_VALUE */
     int64_t recording_time;
-    int nb_streams;       /* number of stream that ffmpeg is aware of; may be different
-                             from ctx.nb_streams if new streams appear during av_read_frame() */
+
+    /* streams that ffmpeg is aware of;
+     * there may be extra streams in ctx that are not mapped to an InputStream
+     * if new streams appear dynamically during demuxing */
+    InputStream **streams;
+    int        nb_streams;
+
     int rate_emu;
     float readrate;
     int accurate_seek;
@@ -483,10 +487,36 @@ typedef enum {
     MUXER_FINISHED = 2,
 } OSTFinished ;
 
+enum {
+    KF_FORCE_SOURCE         = 1,
+    KF_FORCE_SOURCE_NO_DROP = 2,
+};
+
+typedef struct KeyframeForceCtx {
+    int          type;
+
+    int64_t      ref_pts;
+
+    // timestamps of the forced keyframes, in AV_TIME_BASE_Q
+    int64_t     *pts;
+    int       nb_pts;
+    int          index;
+
+    AVExpr      *pexpr;
+    double       expr_const_values[FKF_NB];
+
+    int          dropped_keyframe;
+} KeyframeForceCtx;
+
 typedef struct OutputStream {
     int file_index;          /* file index */
     int index;               /* stream index in the output file */
-    int source_index;        /* InputStream index */
+
+    /* input stream that is the source for this output stream;
+     * may be NULL for streams with no well-defined source, e.g.
+     * attachments or outputs from complex filtergraphs */
+    InputStream *ist;
+
     AVStream *st;            /* stream in the output file */
     /* number of frames emitted by the video-encoding sync code */
     int64_t vsync_frame_number;
@@ -534,15 +564,7 @@ typedef struct OutputStream {
 
     AVRational frame_aspect_ratio;
 
-    /* forced key frames */
-    int64_t forced_kf_ref_pts;
-    int64_t *forced_kf_pts;
-    int forced_kf_count;
-    int forced_kf_index;
-    char *forced_keyframes;
-    AVExpr *forced_keyframes_pexpr;
-    double forced_keyframes_expr_const_values[FKF_NB];
-    int dropped_keyframe;
+    KeyframeForceCtx kf;
 
     /* audio only */
 #if FFMPEG_OPT_MAP_CHANNEL
@@ -576,7 +598,6 @@ typedef struct OutputStream {
     int streamcopy_started;
     int copy_initial_nonkeyframes;
     int copy_prior_start;
-    char *disposition;
 
     int keep_pix_fmt;
 
@@ -624,8 +645,6 @@ typedef struct OutputFile {
     int bitexact;
 } OutputFile;
 
-extern InputStream **input_streams;
-extern int        nb_input_streams;
 extern InputFile   **input_files;
 extern int        nb_input_files;
 
@@ -743,8 +762,6 @@ void of_close(OutputFile **pof);
  */
 void of_output_packet(OutputFile *of, AVPacket *pkt, OutputStream *ost, int eof);
 int64_t of_filesize(OutputFile *of);
-AVChapter * const *
-of_get_chapters(OutputFile *of, unsigned int *nb_chapters);
 
 int ifile_open(const OptionsContext *o, const char *filename);
 void ifile_close(InputFile **f);
@@ -761,6 +778,10 @@ void ifile_close(InputFile **f);
  */
 int ifile_get_packet(InputFile *f, AVPacket **pkt);
 
+/* iterate over all input streams in all input files;
+ * pass NULL to start iteration */
+InputStream *ist_iter(InputStream *prev);
+
 #define SPECIFIER_OPT_FMT_str  "%s"
 #define SPECIFIER_OPT_FMT_i    "%i"
 #define SPECIFIER_OPT_FMT_i64  "%"PRId64
@@ -772,26 +793,26 @@ int ifile_get_packet(InputFile *f, AVPacket **pkt);
 {\
     char namestr[128] = "";\
     const char *spec = so->specifier && so->specifier[0] ? so->specifier : "";\
-    for (i = 0; opt_name_##name[i]; i++)\
-        av_strlcatf(namestr, sizeof(namestr), "-%s%s", opt_name_##name[i], opt_name_##name[i+1] ? (opt_name_##name[i+2] ? ", " : " or ") : "");\
+    for (int _i = 0; opt_name_##name[_i]; _i++)\
+        av_strlcatf(namestr, sizeof(namestr), "-%s%s", opt_name_##name[_i], opt_name_##name[_i+1] ? (opt_name_##name[_i+2] ? ", " : " or ") : "");\
     av_log(NULL, AV_LOG_WARNING, "Multiple %s options specified for stream %d, only the last option '-%s%s%s "SPECIFIER_OPT_FMT_##type"' will be used.\n",\
            namestr, st->index, opt_name_##name[0], spec[0] ? ":" : "", spec, so->u.type);\
 }
 
 #define MATCH_PER_STREAM_OPT(name, type, outvar, fmtctx, st)\
 {\
-    int i, ret, matches = 0;\
+    int _ret, _matches = 0;\
     SpecifierOpt *so;\
-    for (i = 0; i < o->nb_ ## name; i++) {\
-        char *spec = o->name[i].specifier;\
-        if ((ret = check_stream_specifier(fmtctx, st, spec)) > 0) {\
-            outvar = o->name[i].u.type;\
-            so = &o->name[i];\
-            matches++;\
-        } else if (ret < 0)\
+    for (int _i = 0; _i < o->nb_ ## name; _i++) {\
+        char *spec = o->name[_i].specifier;\
+        if ((_ret = check_stream_specifier(fmtctx, st, spec)) > 0) {\
+            outvar = o->name[_i].u.type;\
+            so = &o->name[_i];\
+            _matches++;\
+        } else if (_ret < 0)\
             exit_program(1);\
     }\
-    if (matches > 1)\
+    if (_matches > 1)\
        WARN_MULTIPLE_OPT_USAGE(name, type, so, st);\
 }
 

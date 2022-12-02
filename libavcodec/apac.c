@@ -196,15 +196,19 @@ static int apac_decode(AVCodecContext *avctx, AVFrame *frame,
                 return AVERROR_INVALIDDATA;
             }
 
-            if (get_bits_left(gb) < c->block_length * c->bit_length && pkt->size) {
-                c->have_code = 1;
-                s->cur_ch = ch;
-                goto end;
+            if (get_bits_left(gb) < c->block_length * c->bit_length) {
+                if (pkt->size) {
+                    c->have_code = 1;
+                    s->cur_ch = ch;
+                    goto end;
+                } else {
+                    break;
+                }
             }
 
             for (int i = 0; i < c->block_length; i++) {
                 int val = get_bits_long(gb, c->bit_length);
-                int delta = (val & 1) ? ~(val >> 1) : (val >> 1);
+                unsigned delta = (val & 1) ? ~(val >> 1) : (val >> 1);
                 int sample;
 
                 delta += c->last_delta;

@@ -324,6 +324,14 @@ static int fill_frameinfo_by_link(mfxFrameInfo *frameinfo, AVFilterLink *link)
     frameinfo->CropH          = link->h;
     frameinfo->FrameRateExtN  = link->frame_rate.num;
     frameinfo->FrameRateExtD  = link->frame_rate.den;
+
+    /* Apparently VPP in the SDK requires the frame rate to be set to some value, otherwise
+     * init will fail */
+    if (frameinfo->FrameRateExtD == 0 || frameinfo->FrameRateExtN == 0) {
+        frameinfo->FrameRateExtN = 25;
+        frameinfo->FrameRateExtD = 1;
+    }
+
     frameinfo->AspectRatioW   = link->sample_aspect_ratio.num ? link->sample_aspect_ratio.num : 1;
     frameinfo->AspectRatioH   = link->sample_aspect_ratio.den ? link->sample_aspect_ratio.den : 1;
 
@@ -487,15 +495,14 @@ static QSVFrame *query_frame(QSVVPPContext *s, AVFilterLink *outlink)
         if (!out_frame->frame)
             return NULL;
 
-        out_frame->frame->width  = outlink->w;
-        out_frame->frame->height = outlink->h;
-
         ret = map_frame_to_surface(out_frame->frame,
                                    &out_frame->surface);
         if (ret < 0)
             return NULL;
     }
 
+    out_frame->frame->width  = outlink->w;
+    out_frame->frame->height = outlink->h;
     out_frame->surface.Info = s->vpp_param.vpp.Out;
 
     return out_frame;
@@ -834,7 +841,7 @@ int ff_qsvvpp_filter_frame(QSVVPPContext *s, AVFilterLink *inlink, AVFrame *picr
     QSVAsyncFrame     aframe;
     mfxSyncPoint      sync;
     QSVFrame         *in_frame, *out_frame;
-    int               ret, filter_ret;
+    int               ret, ret1, filter_ret;
 
     while (s->eof && av_fifo_read(s->async_fifo, &aframe, 1) >= 0) {
         if (MFXVideoCORE_SyncOperation(s->session, aframe.sync, 1000) < 0)
@@ -891,8 +898,13 @@ int ff_qsvvpp_filter_frame(QSVVPPContext *s, AVFilterLink *inlink, AVFrame *picr
             av_fifo_read(s->async_fifo, &aframe, 1);
 
             do {
-                ret = MFXVideoCORE_SyncOperation(s->session, aframe.sync, 1000);
-            } while (ret == MFX_WRN_IN_EXECUTION);
+                ret1 = MFXVideoCORE_SyncOperation(s->session, aframe.sync, 1000);
+            } while (ret1 == MFX_WRN_IN_EXECUTION);
+
+            if (ret1 < 0) {
+                ret = ret1;
+                break;
+            }
 
             filter_ret = s->filter_frame(outlink, aframe.frame->frame);
             if (filter_ret < 0) {
