@@ -132,10 +132,6 @@ static void smc_encode_stream(SMCContext *s, const AVFrame *frame,
     int cur_y = 0;
     int cur_x = 0;
 
-    memset(s->color_pairs, 0, sizeof(s->color_pairs));
-    memset(s->color_quads, 0, sizeof(s->color_quads));
-    memset(s->color_octets, 0, sizeof(s->color_octets));
-
     /* Number of 4x4 blocks in frame. */
     total_blocks = ((width + 3) / 4) * ((height + 3) / 4);
 
@@ -185,7 +181,7 @@ static void smc_encode_stream(SMCContext *s, const AVFrame *frame,
         while (block_counter > 0 && block_counter + intra_skip_blocks < total_blocks) {
             const int y_size = FFMIN(4, height - cur_y);
             const int x_size = FFMIN(4, width  - cur_x);
-            const ptrdiff_t offset = pixel_ptr - src_pixels;
+            const ptrdiff_t offset = xpixel_ptr - src_pixels;
             const int sy = offset / stride;
             const int sx = offset % stride;
             const int ny = sx < 4 ? sy - 4 : sy;
@@ -194,7 +190,7 @@ static void smc_encode_stream(SMCContext *s, const AVFrame *frame,
             int compare = 0;
 
             for (int y = 0; y < y_size; y++) {
-                compare |= memcmp(old_pixel_ptr + y * stride, pixel_ptr + y * stride, x_size);
+                compare |= !!memcmp(old_pixel_ptr + y * stride, pixel_ptr + y * stride, x_size);
                 if (compare)
                     break;
             }
@@ -248,27 +244,34 @@ static void smc_encode_stream(SMCContext *s, const AVFrame *frame,
         cur_y = frame_y;
         cur_x = frame_x;
 
-        blocks = coded_blocks;
+        blocks = coded_distinct <= 8 ? coded_blocks : 0;
         distinct = coded_distinct;
 
-        if (intra_skip_blocks > 0 && intra_skip_blocks >= inter_skip_blocks) {
+        if (intra_skip_blocks >= blocks && intra_skip_blocks >= inter_skip_blocks) {
             distinct = 17;
             blocks = intra_skip_blocks;
         }
 
-        if (intra_skip_blocks > 16 && intra_skip_blocks >= inter_skip_blocks) {
+        if (intra_skip_blocks > 16 && intra_skip_blocks >= inter_skip_blocks &&
+            intra_skip_blocks >= blocks) {
             distinct = 18;
             blocks = intra_skip_blocks;
         }
 
-        if (inter_skip_blocks > 0 && inter_skip_blocks > intra_skip_blocks) {
+        if (inter_skip_blocks >= blocks && inter_skip_blocks > intra_skip_blocks) {
             distinct = 19;
             blocks = inter_skip_blocks;
         }
 
-        if (inter_skip_blocks > 16 && inter_skip_blocks > intra_skip_blocks) {
+        if (inter_skip_blocks > 16 && inter_skip_blocks > intra_skip_blocks &&
+            inter_skip_blocks >= blocks) {
             distinct = 20;
             blocks = inter_skip_blocks;
+        }
+
+        if (blocks == 0) {
+            blocks = coded_blocks;
+            distinct = coded_distinct;
         }
 
         switch (distinct) {
