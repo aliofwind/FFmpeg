@@ -1076,6 +1076,7 @@ static av_cold void nvenc_setup_rate_control(AVCodecContext *avctx)
                         ctx->encode_config.frameIntervalP - 4;
 
         if (lkd_bound < 0) {
+            ctx->encode_config.rcParams.enableLookahead = 0;
             av_log(avctx, AV_LOG_WARNING,
                    "Lookahead not enabled. Increase buffer delay (-delay).\n");
         } else {
@@ -1088,6 +1089,9 @@ static av_cold void nvenc_setup_rate_control(AVCodecContext *avctx)
                    ctx->encode_config.rcParams.lookaheadDepth,
                    ctx->encode_config.rcParams.disableIadapt ? "disabled" : "enabled",
                    ctx->encode_config.rcParams.disableBadapt ? "disabled" : "enabled");
+            if (ctx->encode_config.rcParams.lookaheadDepth < ctx->rc_lookahead)
+                av_log(avctx, AV_LOG_WARNING, "Clipping lookahead depth to %d (from %d) due to lack of surfaces/delay",
+                    ctx->encode_config.rcParams.lookaheadDepth, ctx->rc_lookahead);
         }
     }
 
