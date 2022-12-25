@@ -1261,9 +1261,8 @@ static int add_metadata_from_side_data(const AVPacket *avpkt, AVFrame *frame)
     return av_packet_unpack_dictionary(side_metadata, size, frame_md);
 }
 
-int ff_decode_frame_props(AVCodecContext *avctx, AVFrame *frame)
+int ff_decode_frame_props_from_pkt(AVFrame *frame, const AVPacket *pkt)
 {
-    const AVPacket *pkt = avctx->internal->last_pkt_props;
     static const struct {
         enum AVPacketSideDataType packet;
         enum AVFrameSideDataType frame;
@@ -1281,32 +1280,44 @@ int ff_decode_frame_props(AVCodecContext *avctx, AVFrame *frame)
         { AV_PKT_DATA_DYNAMIC_HDR10_PLUS,         AV_FRAME_DATA_DYNAMIC_HDR_PLUS },
     };
 
+    frame->pts          = pkt->pts;
+    frame->pkt_pos      = pkt->pos;
+    frame->duration     = pkt->duration;
+    frame->pkt_size     = pkt->size;
+
+    for (int i = 0; i < FF_ARRAY_ELEMS(sd); i++) {
+        size_t size;
+        uint8_t *packet_sd = av_packet_get_side_data(pkt, sd[i].packet, &size);
+        if (packet_sd) {
+            AVFrameSideData *frame_sd = av_frame_new_side_data(frame,
+                                                               sd[i].frame,
+                                                               size);
+            if (!frame_sd)
+                return AVERROR(ENOMEM);
+
+            memcpy(frame_sd->data, packet_sd, size);
+        }
+    }
+    add_metadata_from_side_data(pkt, frame);
+
+    if (pkt->flags & AV_PKT_FLAG_DISCARD) {
+        frame->flags |= AV_FRAME_FLAG_DISCARD;
+    } else {
+        frame->flags = (frame->flags & ~AV_FRAME_FLAG_DISCARD);
+    }
+
+    return 0;
+}
+
+int ff_decode_frame_props(AVCodecContext *avctx, AVFrame *frame)
+{
+    const AVPacket *pkt = avctx->internal->last_pkt_props;
+
     if (!(ffcodec(avctx->codec)->caps_internal & FF_CODEC_CAP_SETS_FRAME_PROPS)) {
-        frame->pts = pkt->pts;
-        frame->pkt_pos      = pkt->pos;
-        frame->duration     = pkt->duration;
+        int ret = ff_decode_frame_props_from_pkt(frame, pkt);
+        if (ret < 0)
+            return ret;
         frame->pkt_size     = (int)(intptr_t)pkt->opaque;
-
-        for (int i = 0; i < FF_ARRAY_ELEMS(sd); i++) {
-            size_t size;
-            uint8_t *packet_sd = av_packet_get_side_data(pkt, sd[i].packet, &size);
-            if (packet_sd) {
-                AVFrameSideData *frame_sd = av_frame_new_side_data(frame,
-                                                                   sd[i].frame,
-                                                                   size);
-                if (!frame_sd)
-                    return AVERROR(ENOMEM);
-
-                memcpy(frame_sd->data, packet_sd, size);
-            }
-        }
-        add_metadata_from_side_data(pkt, frame);
-
-        if (pkt->flags & AV_PKT_FLAG_DISCARD) {
-            frame->flags |= AV_FRAME_FLAG_DISCARD;
-        } else {
-            frame->flags = (frame->flags & ~AV_FRAME_FLAG_DISCARD);
-        }
     }
     frame->reordered_opaque = avctx->reordered_opaque;
 
