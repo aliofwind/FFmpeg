@@ -170,7 +170,7 @@ static int init_segment(AVFilterContext *ctx, AudioFIRSegment *seg,
     if (!seg->tx || !seg->ctx || !seg->itx)
         return AVERROR(ENOMEM);
 
-    seg->fft_length    = part_size * 2 + 2;
+    seg->fft_length    = (part_size + 1) * 2;
     seg->part_size     = part_size;
     seg->block_size    = FFALIGN(seg->fft_length, cpu_align);
     seg->coeff_size    = FFALIGN(seg->part_size + 1, cpu_align);
@@ -217,7 +217,6 @@ static int init_segment(AVFilterContext *ctx, AudioFIRSegment *seg,
 
     seg->sumin  = ff_get_audio_buffer(ctx->inputs[0], seg->fft_length);
     seg->sumout = ff_get_audio_buffer(ctx->inputs[0], seg->fft_length);
-    seg->blockin  = ff_get_audio_buffer(ctx->inputs[0], seg->block_size * seg->nb_partitions);
     seg->blockout = ff_get_audio_buffer(ctx->inputs[0], seg->block_size * seg->nb_partitions);
     seg->tempin = ff_get_audio_buffer(ctx->inputs[0], seg->block_size);
     seg->tempout = ff_get_audio_buffer(ctx->inputs[0], seg->block_size);
@@ -226,7 +225,7 @@ static int init_segment(AVFilterContext *ctx, AudioFIRSegment *seg,
     seg->input  = ff_get_audio_buffer(ctx->inputs[0], seg->input_size);
     seg->output = ff_get_audio_buffer(ctx->inputs[0], seg->part_size);
     seg->loaded = ff_get_audio_buffer(ctx->inputs[0], seg->nb_partitions);
-    if (!seg->buffer || !seg->sumin || !seg->sumout || !seg->blockin || !seg->blockout ||
+    if (!seg->buffer || !seg->sumin || !seg->sumout || !seg->blockout ||
         !seg->coeff || !seg->input || !seg->output || !seg->loaded || !seg->tempin || !seg->tempout)
         return AVERROR(ENOMEM);
 
@@ -261,7 +260,6 @@ static void uninit_segment(AVFilterContext *ctx, AudioFIRSegment *seg)
 
     av_frame_free(&seg->tempin);
     av_frame_free(&seg->tempout);
-    av_frame_free(&seg->blockin);
     av_frame_free(&seg->blockout);
     av_frame_free(&seg->sumin);
     av_frame_free(&seg->sumout);
@@ -634,15 +632,16 @@ static int process_command(AVFilterContext *ctx,
                            int flags)
 {
     AudioFIRContext *s = ctx->priv;
-    int ret;
+    int prev_selir, ret;
 
-    s->prev_selir = s->selir;
+    prev_selir = s->selir;
     ret = ff_filter_process_command(ctx, cmd, arg, res, res_len, flags);
     if (ret < 0)
         return ret;
 
     s->selir = FFMIN(s->nb_irs - 1, s->selir);
-    if (s->selir != s->prev_selir) {
+    if (s->selir != prev_selir) {
+        s->prev_selir = prev_selir;
         for (int n = 0; n < s->nb_segments; n++) {
             AudioFIRSegment *seg = &s->seg[n];
 
@@ -679,8 +678,8 @@ static const AVOption afir_options[] = {
     { "channel", "set IR channel to display frequency response", OFFSET(ir_channel), AV_OPT_TYPE_INT, {.i64=0}, 0, 1024, VF },
     { "size",   "set video size",    OFFSET(w),          AV_OPT_TYPE_IMAGE_SIZE, {.str = "hd720"}, 0, 0, VF },
     { "rate",   "set video rate",    OFFSET(frame_rate), AV_OPT_TYPE_VIDEO_RATE, {.str = "25"}, 0, INT32_MAX, VF },
-    { "minp",   "set min partition size", OFFSET(minp),  AV_OPT_TYPE_INT,   {.i64=8192}, 1, 32768, AF },
-    { "maxp",   "set max partition size", OFFSET(maxp),  AV_OPT_TYPE_INT,   {.i64=8192}, 8, 32768, AF },
+    { "minp",   "set min partition size", OFFSET(minp),  AV_OPT_TYPE_INT,   {.i64=8192}, 1, 65536, AF },
+    { "maxp",   "set max partition size", OFFSET(maxp),  AV_OPT_TYPE_INT,   {.i64=8192}, 8, 65536, AF },
     { "nbirs",  "set number of input IRs",OFFSET(nb_irs),AV_OPT_TYPE_INT,   {.i64=1},    1,    32, AF },
     { "ir",     "select IR",              OFFSET(selir), AV_OPT_TYPE_INT,   {.i64=0},    0,    31, AFR },
     { "precision", "set processing precision",    OFFSET(precision), AV_OPT_TYPE_INT,   {.i64=0}, 0, 2, AF, "precision" },
