@@ -18482,9 +18482,6 @@ Compute new histogram for each frame.
 @end table
 
 Default value is @var{full}.
-@item use_alpha
-Create a palette of colors with alpha components.
-Setting this, will automatically disable 'reserve_transparent'.
 @end table
 
 The filter also exports the frame metadata @code{lavfi.color_quant_ratio}
@@ -18527,6 +18524,12 @@ Floyd and Steingberg dithering (error diffusion)
 Frankie Sierra dithering v2 (error diffusion)
 @item sierra2_4a
 Frankie Sierra dithering v2 "Lite" (error diffusion)
+@item sierra3
+Frankie Sierra dithering v3 (error diffusion)
+@item burkes
+Burkes dithering (error diffusion)
+@item atkinson
+Atkinson dithering by Bill Atkinson at Apple Computer (error diffusion)
 @end table
 
 Default is @var{sierra2_4a}.
@@ -18563,11 +18566,6 @@ will be treated as completely opaque, and values below this threshold will be
 treated as completely transparent.
 
 The option must be an integer value in the range [0,255]. Default is @var{128}.
-
-@item use_alpha
-Apply the palette by taking alpha values into account. Only useful with
-palettes that are containing multiple colors with alpha components.
-Setting this will automatically disable 'alpha_treshold'.
 @end table
 
 @subsection Examples
