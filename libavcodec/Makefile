@@ -1252,6 +1252,7 @@ SKIPHEADERS                            += %_tablegen.h                  \
                                           aaccoder_trellis.h            \
                                           aacenc_quantization.h         \
                                           aacenc_quantization_misc.h    \
+                                          bitstream_template.h          \
                                           $(ARCH)/vpx_arith.h          \
 
 SKIPHEADERS-$(CONFIG_AMF)              += amfenc.h
@@ -1278,6 +1279,8 @@ SKIPHEADERS-$(CONFIG_ZLIB)             += zlib_wrapper.h
 
 TESTPROGS = avcodec                                                     \
             avpacket                                                    \
+            bitstream_be                                                \
+            bitstream_le                                                \
             celp_math                                                   \
             codec_desc                                                  \
             htmlsubtitles                                               \
