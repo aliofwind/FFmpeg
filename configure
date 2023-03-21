@@ -2774,7 +2774,7 @@ asv1_encoder_select="aandcttables bswapdsp fdctdsp pixblockdsp"
 asv2_decoder_select="blockdsp bswapdsp idctdsp"
 asv2_encoder_select="aandcttables bswapdsp fdctdsp pixblockdsp"
 atrac1_decoder_select="sinewin"
-av1_decoder_select="av1_frame_split_bsf cbs_av1"
+av1_decoder_select="av1_frame_split_bsf cbs_av1 atsc_a53"
 bink_decoder_select="blockdsp hpeldsp"
 binkaudio_dct_decoder_select="wma_freqs"
 binkaudio_rdft_decoder_select="wma_freqs"
@@ -3836,7 +3836,7 @@ ffmpeg_select="aformat_filter anull_filter atrim_filter format_filter
                hflip_filter null_filter
                transpose_filter trim_filter vflip_filter"
 ffmpeg_suggest="ole32 psapi shell32"
-ffplay_deps="avcodec avformat swscale swresample sdl2"
+ffplay_deps="avcodec avformat avfilter swscale swresample sdl2"
 ffplay_select="rdft crop_filter transpose_filter hflip_filter vflip_filter rotate_filter"
 ffplay_suggest="shell32"
 ffprobe_deps="avcodec avformat"
@@ -7359,7 +7359,6 @@ enable frame_thread_encoder
 # they are kept disabled for now, but will be removed if
 # nobody updates and re-enables them
 disable mcdeint_filter
-disable uspp_filter
 
 enabled asm || { arch=c; disable $ARCH_LIST $ARCH_EXT_LIST; }
 
