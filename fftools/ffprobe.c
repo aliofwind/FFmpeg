@@ -2360,6 +2360,9 @@ static void print_pkt_side_data(WriterContext *w,
             AVContentLightMetadata *metadata = (AVContentLightMetadata *)sd->data;
             print_int("max_content", metadata->MaxCLL);
             print_int("max_average", metadata->MaxFALL);
+        } else if (sd->type == AV_PKT_DATA_DYNAMIC_HDR10_PLUS) {
+            AVDynamicHDRPlus *metadata = (AVDynamicHDRPlus *)sd->data;
+            print_dynamic_hdr10_plus(w, metadata);
         } else if (sd->type == AV_PKT_DATA_DOVI_CONF) {
             AVDOVIDecoderConfigurationRecord *dovi = (AVDOVIDecoderConfigurationRecord *)sd->data;
             print_int("dv_version_major", dovi->dv_version_major);
@@ -2617,6 +2620,10 @@ static void show_frame(WriterContext *w, AVFrame *frame, AVStream *stream,
     case AVMEDIA_TYPE_VIDEO:
         print_int("width",                  frame->width);
         print_int("height",                 frame->height);
+        print_int("crop_top",               frame->crop_top);
+        print_int("crop_bottom",            frame->crop_bottom);
+        print_int("crop_left",              frame->crop_left);
+        print_int("crop_right",             frame->crop_left);
         s = av_get_pix_fmt_name(frame->format);
         if (s) print_str    ("pix_fmt", s);
         else   print_str_opt("pix_fmt", "unknown");
