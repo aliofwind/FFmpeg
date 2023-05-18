@@ -55,7 +55,6 @@ FF_DISABLE_DEPRECATION_WARNINGS
 FF_ENABLE_DEPRECATION_WARNINGS
 #endif
     frame->time_base           = (AVRational){ 0, 1 };
-    frame->key_frame           = 1;
     frame->sample_aspect_ratio = (AVRational){ 0, 1 };
     frame->format              = -1; /* unknown */
     frame->extended_data       = frame->data;
@@ -265,7 +264,11 @@ static int frame_copy_props(AVFrame *dst, const AVFrame *src, int force_copy)
 {
     int ret;
 
+#if FF_API_FRAME_KEY
+FF_DISABLE_DEPRECATION_WARNINGS
     dst->key_frame              = src->key_frame;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
     dst->pict_type              = src->pict_type;
     dst->sample_aspect_ratio    = src->sample_aspect_ratio;
     dst->crop_top               = src->crop_top;
@@ -275,8 +278,12 @@ static int frame_copy_props(AVFrame *dst, const AVFrame *src, int force_copy)
     dst->pts                    = src->pts;
     dst->duration               = src->duration;
     dst->repeat_pict            = src->repeat_pict;
+#if FF_API_INTERLACED_FRAME
+FF_DISABLE_DEPRECATION_WARNINGS
     dst->interlaced_frame       = src->interlaced_frame;
     dst->top_field_first        = src->top_field_first;
+FF_ENABLE_DEPRECATION_WARNINGS
+#endif
     dst->palette_has_changed    = src->palette_has_changed;
     dst->sample_rate            = src->sample_rate;
     dst->opaque                 = src->opaque;

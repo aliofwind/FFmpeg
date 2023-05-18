@@ -30,6 +30,7 @@
 #include "libavutil/opt.h"
 
 #include "atsc_a53.h"
+#include "av1_parse.h"
 #include "avcodec.h"
 #include "bytestream.h"
 #include "codec_internal.h"
@@ -154,12 +155,9 @@ static void libdav1d_init_params(AVCodecContext *c, const Dav1dSequenceHeader *s
     else
         c->pix_fmt = pix_fmt[seq->layout][seq->hbd];
 
-    if (seq->num_units_in_tick && seq->time_scale) {
-        av_reduce(&c->framerate.den, &c->framerate.num,
-                  seq->num_units_in_tick, seq->time_scale, INT_MAX);
-        if (seq->equal_picture_interval)
-            c->ticks_per_frame = seq->num_ticks_per_picture;
-    }
+    c->framerate = ff_av1_framerate(seq->num_ticks_per_picture,
+                                    (unsigned)seq->num_units_in_tick,
+                                    (unsigned)seq->time_scale);
 
    if (seq->film_grain_present)
        c->properties |= FF_CODEC_PROPERTY_FILM_GRAIN;
@@ -463,7 +461,10 @@ FF_ENABLE_DEPRECATION_WARNINGS
         goto fail;
 
     frame->pkt_dts = pkt->pts;
-    frame->key_frame = p->frame_hdr->frame_type == DAV1D_FRAME_TYPE_KEY;
+    if (p->frame_hdr->frame_type == DAV1D_FRAME_TYPE_KEY)
+        frame->flags |= AV_FRAME_FLAG_KEY;
+    else
+        frame->flags &= ~AV_FRAME_FLAG_KEY;
 
     switch (p->frame_hdr->frame_type) {
     case DAV1D_FRAME_TYPE_KEY:
@@ -511,10 +512,16 @@ FF_ENABLE_DEPRECATION_WARNINGS
         light->MaxFALL = p->content_light->max_frame_average_light_level;
     }
     if (p->itut_t35) {
+#if FF_DAV1D_VERSION_AT_LEAST(6,9)
+        for (size_t i = 0; i < p->n_itut_t35; i++) {
+            const Dav1dITUTT35 *itut_t35 = &p->itut_t35[i];
+#else
+        const Dav1dITUTT35 *itut_t35 = p->itut_t35;
+#endif
         GetByteContext gb;
         int provider_code;
 
-        bytestream2_init(&gb, p->itut_t35->payload, p->itut_t35->payload_size);
+        bytestream2_init(&gb, itut_t35->payload, itut_t35->payload_size);
 
         provider_code = bytestream2_get_be16(&gb);
         switch (provider_code) {
@@ -546,7 +553,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
             int provider_oriented_code = bytestream2_get_be16(&gb);
             int application_identifier = bytestream2_get_byte(&gb);
 
-            if (p->itut_t35->country_code != 0xB5 ||
+            if (itut_t35->country_code != 0xB5 ||
                 provider_oriented_code != 1 || application_identifier != 4)
                 break;
 
@@ -565,6 +572,9 @@ FF_ENABLE_DEPRECATION_WARNINGS
         default: // ignore unsupported provider codes
             break;
         }
+#if FF_DAV1D_VERSION_AT_LEAST(6,9)
+        }
+#endif
     }
     if (p->frame_hdr->film_grain.present && (!dav1d->apply_grain ||
         (c->export_side_data & AV_CODEC_EXPORT_DATA_FILM_GRAIN))) {

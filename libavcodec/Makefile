@@ -253,6 +253,7 @@ OBJS-$(CONFIG_AURA2_DECODER)           += aura.o
 OBJS-$(CONFIG_AV1_DECODER)             += av1dec.o
 OBJS-$(CONFIG_AV1_CUVID_DECODER)       += cuviddec.o
 OBJS-$(CONFIG_AV1_MEDIACODEC_DECODER)  += mediacodecdec.o
+OBJS-$(CONFIG_AV1_MEDIACODEC_ENCODER)  += mediacodecenc.o
 OBJS-$(CONFIG_AV1_NVENC_ENCODER)       += nvenc_av1.o nvenc.o
 OBJS-$(CONFIG_AV1_QSV_ENCODER)         += qsvenc_av1.o
 OBJS-$(CONFIG_AVRN_DECODER)            += avrndec.o
@@ -469,7 +470,7 @@ OBJS-$(CONFIG_JACOSUB_DECODER)         += jacosubdec.o ass.o
 OBJS-$(CONFIG_JPEG2000_ENCODER)        += j2kenc.o mqcenc.o mqc.o jpeg2000.o \
                                           jpeg2000dwt.o
 OBJS-$(CONFIG_JPEG2000_DECODER)        += jpeg2000dec.o jpeg2000.o jpeg2000dsp.o \
-                                          jpeg2000dwt.o mqcdec.o mqc.o
+                                          jpeg2000dwt.o mqcdec.o mqc.o jpeg2000htdec.o
 OBJS-$(CONFIG_JPEGLS_DECODER)          += jpeglsdec.o jpegls.o
 OBJS-$(CONFIG_JPEGLS_ENCODER)          += jpeglsenc.o jpegls.o
 OBJS-$(CONFIG_JV_DECODER)              += jvdec.o
@@ -583,6 +584,7 @@ OBJS-$(CONFIG_PBM_DECODER)             += pnmdec.o pnm.o
 OBJS-$(CONFIG_PBM_ENCODER)             += pnmenc.o
 OBJS-$(CONFIG_PCX_DECODER)             += pcx.o
 OBJS-$(CONFIG_PCX_ENCODER)             += pcxenc.o
+OBJS-$(CONFIG_PDV_DECODER)             += pdvdec.o
 OBJS-$(CONFIG_PFM_DECODER)             += pnmdec.o pnm.o
 OBJS-$(CONFIG_PFM_ENCODER)             += pnmenc.o
 OBJS-$(CONFIG_PGM_DECODER)             += pnmdec.o pnm.o
@@ -761,10 +763,11 @@ OBJS-$(CONFIG_VP3_DECODER)             += vp3.o jpegquanttables.o
 OBJS-$(CONFIG_VP5_DECODER)             += vp5.o vp56.o vp56data.o vpx_rac.o
 OBJS-$(CONFIG_VP6_DECODER)             += vp6.o vp56.o vp56data.o \
                                           vp6dsp.o vpx_rac.o
-OBJS-$(CONFIG_VP7_DECODER)             += vp8.o vpx_rac.o
-OBJS-$(CONFIG_VP8_DECODER)             += vp8.o vpx_rac.o
+OBJS-$(CONFIG_VP7_DECODER)             += vp8.o vp8data.o vpx_rac.o
+OBJS-$(CONFIG_VP8_DECODER)             += vp8.o vp8data.o vpx_rac.o
 OBJS-$(CONFIG_VP8_CUVID_DECODER)       += cuviddec.o
 OBJS-$(CONFIG_VP8_MEDIACODEC_DECODER)  += mediacodecdec.o
+OBJS-$(CONFIG_VP8_MEDIACODEC_ENCODER)  += mediacodecenc.o
 OBJS-$(CONFIG_VP8_QSV_DECODER)         += qsvdec.o
 OBJS-$(CONFIG_VP8_RKMPP_DECODER)       += rkmppdec.o
 OBJS-$(CONFIG_VP8_VAAPI_ENCODER)       += vaapi_encode_vp8.o
@@ -1085,7 +1088,7 @@ OBJS-$(CONFIG_LIBARIBCAPTION_DECODER)     += libaribcaption.o ass.o
 OBJS-$(CONFIG_LIBCELT_DECODER)            += libcelt_dec.o
 OBJS-$(CONFIG_LIBCODEC2_DECODER)          += libcodec2.o
 OBJS-$(CONFIG_LIBCODEC2_ENCODER)          += libcodec2.o
-OBJS-$(CONFIG_LIBDAV1D_DECODER)           += libdav1d.o
+OBJS-$(CONFIG_LIBDAV1D_DECODER)           += libdav1d.o av1_parse.o
 OBJS-$(CONFIG_LIBDAVS2_DECODER)           += libdavs2.o
 OBJS-$(CONFIG_LIBFDK_AAC_DECODER)         += libfdk-aacdec.o
 OBJS-$(CONFIG_LIBFDK_AAC_ENCODER)         += libfdk-aacenc.o
@@ -1142,7 +1145,7 @@ OBJS-$(CONFIG_AC3_PARSER)              += aac_ac3_parser.o ac3tab.o \
                                           ac3_channel_layout_tab.o
 OBJS-$(CONFIG_ADX_PARSER)              += adx_parser.o
 OBJS-$(CONFIG_AMR_PARSER)              += amr_parser.o
-OBJS-$(CONFIG_AV1_PARSER)              += av1_parser.o
+OBJS-$(CONFIG_AV1_PARSER)              += av1_parser.o av1_parse.o
 OBJS-$(CONFIG_AVS2_PARSER)             += avs2.o avs2_parser.o
 OBJS-$(CONFIG_AVS3_PARSER)             += avs3_parser.o
 OBJS-$(CONFIG_BMP_PARSER)              += bmp_parser.o

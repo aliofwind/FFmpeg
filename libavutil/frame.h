@@ -416,10 +416,15 @@ typedef struct AVFrame {
      */
     int format;
 
+#if FF_API_FRAME_KEY
     /**
      * 1 -> keyframe, 0-> not
+     *
+     * @deprecated Use AV_FRAME_FLAG_KEY instead
      */
+    attribute_deprecated
     int key_frame;
+#endif
 
     /**
      * Picture type of the frame.
@@ -486,20 +491,42 @@ typedef struct AVFrame {
     void *opaque;
 
     /**
-     * When decoding, this signals how much the picture must be delayed.
-     * extra_delay = repeat_pict / (2*fps)
+     * Number of fields in this frame which should be repeated, i.e. the total
+     * duration of this frame should be repeat_pict + 2 normal field durations.
+     *
+     * For interlaced frames this field may be set to 1, which signals that this
+     * frame should be presented as 3 fields: beginning with the first field (as
+     * determined by AV_FRAME_FLAG_TOP_FIELD_FIRST being set or not), followed
+     * by the second field, and then the first field again.
+     *
+     * For progressive frames this field may be set to a multiple of 2, which
+     * signals that this frame's duration should be (repeat_pict + 2) / 2
+     * normal frame durations.
+     *
+     * @note This field is computed from MPEG2 repeat_first_field flag and its
+     * associated flags, H.264 pic_struct from picture timing SEI, and
+     * their analogues in other codecs. Typically it should only be used when
+     * higher-layer timing information is not available.
      */
     int repeat_pict;
 
+#if FF_API_INTERLACED_FRAME
     /**
      * The content of the picture is interlaced.
+     *
+     * @deprecated Use AV_FRAME_FLAG_INTERLACED instead
      */
+    attribute_deprecated
     int interlaced_frame;
 
     /**
      * If the content is interlaced, is top field displayed first.
+     *
+     * @deprecated Use AV_FRAME_FLAG_TOP_FIELD_FIRST instead
      */
+    attribute_deprecated
     int top_field_first;
+#endif
 
     /**
      * Tell user application that palette has changed from previous frame.
@@ -583,9 +610,22 @@ typedef struct AVFrame {
  */
 #define AV_FRAME_FLAG_CORRUPT       (1 << 0)
 /**
+ * A flag to mark frames that are keyframes.
+ */
+#define AV_FRAME_FLAG_KEY (1 << 1)
+/**
  * A flag to mark the frames which need to be decoded, but shouldn't be output.
  */
 #define AV_FRAME_FLAG_DISCARD   (1 << 2)
+/**
+ * A flag to mark frames whose content is interlaced.
+ */
+#define AV_FRAME_FLAG_INTERLACED (1 << 3)
+/**
+ * A flag to mark frames where the top field is displayed first if the content
+ * is interlaced.
+ */
+#define AV_FRAME_FLAG_TOP_FIELD_FIRST (1 << 4)
 /**
  * @}
  */
