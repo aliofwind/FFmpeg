@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2020 Loongson Technology Corporation Limited
- * Contributed by Shiyou Yin <yinshiyou-hf@loongson.cn>
+ * Copyright (c) 2023 Loongson Technology Corporation Limited
+ * Contributed by Hao Chen <chenhao@loongson.cn>
  *
  * This file is part of FFmpeg.
  *
@@ -19,18 +19,17 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVCODEC_LOONGARCH_H264CHROMA_LASX_H
-#define AVCODEC_LOONGARCH_H264CHROMA_LASX_H
+#ifndef AVCODEC_LOONGARCH_H264_INTRAPRED_LOONGARCH_H
+#define AVCODEC_LOONGARCH_H264_INTRAPRED_LOONGARCH_H
 
-#include <stdint.h>
-#include <stddef.h>
-#include "libavcodec/h264.h"
+#include "libavcodec/avcodec.h"
 
-void ff_put_h264_chroma_mc4_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
-void ff_put_h264_chroma_mc8_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
-void ff_avg_h264_chroma_mc8_lasx(uint8_t *dst, const uint8_t *src, ptrdiff_t stride,
-        int h, int x, int y);
+void ff_h264_pred16x16_plane_h264_8_lsx(uint8_t *src, ptrdiff_t stride);
+void ff_h264_pred16x16_plane_rv40_8_lsx(uint8_t *src, ptrdiff_t stride);
+void ff_h264_pred16x16_plane_svq3_8_lsx(uint8_t *src, ptrdiff_t stride);
 
-#endif /* AVCODEC_LOONGARCH_H264CHROMA_LASX_H */
+void ff_h264_pred16x16_plane_h264_8_lasx(uint8_t *src, ptrdiff_t stride);
+void ff_h264_pred16x16_plane_rv40_8_lasx(uint8_t *src, ptrdiff_t stride);
+void ff_h264_pred16x16_plane_svq3_8_lasx(uint8_t *src, ptrdiff_t stride);
+
+#endif  // #ifndef AVCODEC_LOONGARCH_H264_INTRAPRED_LOONGARCH_H

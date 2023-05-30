@@ -792,7 +792,7 @@ static void new_stream_audio(Muxer *mux, const OptionsContext *o,
                     ist = ost->ist;
                 }
 
-                if (!ist || (ist->file_index == map->file_idx && ist->st->index == map->stream_idx)) {
+                if (!ist || (ist->file_index == map->file_idx && ist->index == map->stream_idx)) {
                     if (av_reallocp_array(&ost->audio_channels_map,
                                           ost->audio_channels_mapped + 1,
                                           sizeof(*ost->audio_channels_map)
@@ -822,11 +822,28 @@ static void new_stream_subtitle(Muxer *mux, const OptionsContext *o,
 
     if (ost->enc_ctx) {
         AVCodecContext *subtitle_enc = ost->enc_ctx;
+
+        AVCodecDescriptor const *input_descriptor =
+            avcodec_descriptor_get(ost->ist->par->codec_id);
+        AVCodecDescriptor const *output_descriptor =
+            avcodec_descriptor_get(subtitle_enc->codec_id);
+        int input_props = 0, output_props = 0;
+
         char *frame_size = NULL;
 
         MATCH_PER_STREAM_OPT(frame_sizes, str, frame_size, mux->fc, st);
         if (frame_size && av_parse_video_size(&subtitle_enc->width, &subtitle_enc->height, frame_size) < 0) {
             av_log(ost, AV_LOG_FATAL, "Invalid frame size: %s.\n", frame_size);
+            exit_program(1);
+        }
+        if (input_descriptor)
+            input_props = input_descriptor->props & (AV_CODEC_PROP_TEXT_SUB | AV_CODEC_PROP_BITMAP_SUB);
+        if (output_descriptor)
+            output_props = output_descriptor->props & (AV_CODEC_PROP_TEXT_SUB | AV_CODEC_PROP_BITMAP_SUB);
+        if (input_props && output_props && input_props != output_props) {
+            av_log(ost, AV_LOG_ERROR,
+                   "Subtitle encoding currently only possible from text to text "
+                   "or bitmap to bitmap\n");
             exit_program(1);
         }
     }
@@ -1225,8 +1242,14 @@ static OutputStream *ost_add(Muxer *mux, const OptionsContext *o,
                        "Error initializing a simple filtergraph\n");
                 exit_program(1);
             }
-        } else
-            ist_output_add(ost->ist, ost);
+        } else {
+            ret = ist_output_add(ost->ist, ost);
+            if (ret < 0) {
+                av_log(ost, AV_LOG_ERROR,
+                       "Error binding an input stream\n");
+                exit_program(1);
+            }
+        }
     }
 
     if (ost->ist && !ost->enc) {
@@ -1602,7 +1625,7 @@ static int setup_sync_queues(Muxer *mux, AVFormatContext *oc, int64_t buf_size_u
      * - at least one audio encoder requires constant frame sizes
      */
     if ((of->shortest && nb_av_enc > 1) || limit_frames_av_enc || nb_audio_fs) {
-        of->sq_encode = sq_alloc(SYNC_QUEUE_FRAMES, buf_size_us);
+        of->sq_encode = sq_alloc(SYNC_QUEUE_FRAMES, buf_size_us, mux);
         if (!of->sq_encode)
             return AVERROR(ENOMEM);
 
@@ -1627,7 +1650,7 @@ static int setup_sync_queues(Muxer *mux, AVFormatContext *oc, int64_t buf_size_u
     /* if there are any additional interleaved streams, then ALL the streams
      * are also synchronized before sending them to the muxer */
     if (nb_interleaved > nb_av_enc) {
-        mux->sq_mux = sq_alloc(SYNC_QUEUE_PACKETS, buf_size_us);
+        mux->sq_mux = sq_alloc(SYNC_QUEUE_PACKETS, buf_size_us, mux);
         if (!mux->sq_mux)
             return AVERROR(ENOMEM);
 

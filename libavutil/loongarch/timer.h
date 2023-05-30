@@ -1,6 +1,6 @@
 /*
- * Copyright (c) 2021 Loongson Technology Corporation Limited
- * Contributed by Hao Chen <chenhao@loongson.cn>
+ * Copyright (c) 2023 Loongson Technology Corporation Limited
+ * Contributed by Hecai Yuan <yuanhecai@loongson.cn>
  *
  * This file is part of FFmpeg.
  *
@@ -19,13 +19,30 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVCODEC_LOONGARCH_H264_INTRAPRED_LASX_H
-#define AVCODEC_LOONGARCH_H264_INTRAPRED_LASX_H
+#ifndef AVUTIL_LOONGARCH_TIMER_H
+#define AVUTIL_LOONGARCH_TIMER_H
 
-#include "libavcodec/avcodec.h"
+#include <stdint.h>
+#include "config.h"
 
-void ff_h264_pred16x16_plane_h264_8_lasx(uint8_t *src, ptrdiff_t stride);
-void ff_h264_pred16x16_plane_rv40_8_lasx(uint8_t *src, ptrdiff_t stride);
-void ff_h264_pred16x16_plane_svq3_8_lasx(uint8_t *src, ptrdiff_t stride);
+#if HAVE_INLINE_ASM
 
-#endif  // #ifndef AVCODEC_LOONGARCH_H264_INTRAPRED_LASX_H
+#define AV_READ_TIME read_time
+
+static inline uint64_t read_time(void)
+{
+
+#if ARCH_LOONGARCH64
+    uint64_t a, id;
+    __asm__ volatile ( "rdtime.d  %0, %1" : "=r"(a), "=r"(id) :: );
+    return a;
+#else
+    uint32_t a, id;
+    __asm__ volatile ( "rdtimel.w  %0, %1" : "=r"(a), "=r"(id) :: );
+    return (uint64_t)a;
+#endif
+}
+
+#endif /* HAVE_INLINE_ASM */
+
+#endif /* AVUTIL_LOONGARCH_TIMER_H */

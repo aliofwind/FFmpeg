@@ -56,21 +56,17 @@ enum {
     TONE_MAP_COUNT,
 };
 
-static const struct pl_tone_map_function * const tonemapping_funcs[TONE_MAP_COUNT] = {
-    [TONE_MAP_AUTO]      = &pl_tone_map_auto,
-    [TONE_MAP_CLIP]      = &pl_tone_map_clip,
-#if PL_API_VER >= 246
-    [TONE_MAP_ST2094_40] = &pl_tone_map_st2094_40,
-    [TONE_MAP_ST2094_10] = &pl_tone_map_st2094_10,
-#endif
-    [TONE_MAP_BT2390]    = &pl_tone_map_bt2390,
-    [TONE_MAP_BT2446A]   = &pl_tone_map_bt2446a,
-    [TONE_MAP_SPLINE]    = &pl_tone_map_spline,
-    [TONE_MAP_REINHARD]  = &pl_tone_map_reinhard,
-    [TONE_MAP_MOBIUS]    = &pl_tone_map_mobius,
-    [TONE_MAP_HABLE]     = &pl_tone_map_hable,
-    [TONE_MAP_GAMMA]     = &pl_tone_map_gamma,
-    [TONE_MAP_LINEAR]    = &pl_tone_map_linear,
+enum {
+    GAMUT_MAP_CLIP,
+    GAMUT_MAP_PERCEPTUAL,
+    GAMUT_MAP_RELATIVE,
+    GAMUT_MAP_SATURATION,
+    GAMUT_MAP_ABSOLUTE,
+    GAMUT_MAP_DESATURATE,
+    GAMUT_MAP_DARKEN,
+    GAMUT_MAP_HIGHLIGHT,
+    GAMUT_MAP_LINEAR,
+    GAMUT_MAP_COUNT,
 };
 
 static const char *const var_names[] = {
@@ -131,6 +127,8 @@ typedef struct LibplaceboContext {
 
     /* filter state */
     AVFifo *out_pts; ///< timestamps of wanted output frames
+    int64_t status_pts;
+    int status;
 
     /* settings */
     char *out_format_string;
@@ -150,6 +148,7 @@ typedef struct LibplaceboContext {
     AVExpr *pos_x_pexpr, *pos_y_pexpr, *pos_w_pexpr, *pos_h_pexpr;
     AVRational target_sar;
     float pad_crop_ratio;
+    float corner_rounding;
     int force_original_aspect_ratio;
     int force_divisible_by;
     int normalize_sar;
@@ -199,18 +198,16 @@ typedef struct LibplaceboContext {
     float min_peak;
     float scene_low;
     float scene_high;
-    float overshoot;
+    float percentile;
 
     /* pl_color_map_params */
     struct pl_color_map_params color_map_params;
-    int intent;
     int gamut_mode;
     int tonemapping;
     float tonemapping_param;
-    int tonemapping_mode;
     int inverse_tonemapping;
-    float crosstalk;
     int tonemapping_lut_size;
+    float hybrid_mix;
 
 #if FF_API_LIBPLACEBO_OPTS
     /* for backwards compatibility */
@@ -219,6 +216,10 @@ typedef struct LibplaceboContext {
     int gamut_warning;
     int gamut_clipping;
     int force_icc_lut;
+    int intent;
+    int tonemapping_mode;
+    float crosstalk;
+    float overshoot;
 #endif
 
     /* pl_dither_params */
@@ -269,20 +270,53 @@ static void pl_av_log(void *log_ctx, enum pl_log_level level, const char *msg)
     av_log(log_ctx, av_lev, "%s\n", msg);
 }
 
-static int parse_shader(AVFilterContext *avctx, const void *shader, size_t len)
-{
-    LibplaceboContext *s = avctx->priv;
-    const struct pl_hook *hook;
+static const struct pl_tone_map_function *get_tonemapping_func(int tm) {
+    switch (tm) {
+    case TONE_MAP_AUTO:       return &pl_tone_map_auto;
+    case TONE_MAP_CLIP:       return &pl_tone_map_clip;
+#if PL_API_VER >= 246
+    case TONE_MAP_ST2094_40:  return &pl_tone_map_st2094_40;
+    case TONE_MAP_ST2094_10:  return &pl_tone_map_st2094_10;
+#endif
+    case TONE_MAP_BT2390:     return &pl_tone_map_bt2390;
+    case TONE_MAP_BT2446A:    return &pl_tone_map_bt2446a;
+    case TONE_MAP_SPLINE:     return &pl_tone_map_spline;
+    case TONE_MAP_REINHARD:   return &pl_tone_map_reinhard;
+    case TONE_MAP_MOBIUS:     return &pl_tone_map_mobius;
+    case TONE_MAP_HABLE:      return &pl_tone_map_hable;
+    case TONE_MAP_GAMMA:      return &pl_tone_map_gamma;
+    case TONE_MAP_LINEAR:     return &pl_tone_map_linear;
+    default: av_assert0(0);
+    }
+}
 
-    hook = pl_mpv_user_shader_parse(s->gpu, shader, len);
-    if (!hook) {
-        av_log(s, AV_LOG_ERROR, "Failed parsing custom shader!\n");
-        return AVERROR(EINVAL);
+static void set_gamut_mode(struct pl_color_map_params *p, int gamut_mode)
+{
+    switch (gamut_mode) {
+#if PL_API_VER >= 269
+    case GAMUT_MAP_CLIP:       p->gamut_mapping = &pl_gamut_map_clip; return;
+    case GAMUT_MAP_PERCEPTUAL: p->gamut_mapping = &pl_gamut_map_perceptual; return;
+    case GAMUT_MAP_RELATIVE:   p->gamut_mapping = &pl_gamut_map_relative; return;
+    case GAMUT_MAP_SATURATION: p->gamut_mapping = &pl_gamut_map_saturation; return;
+    case GAMUT_MAP_ABSOLUTE:   p->gamut_mapping = &pl_gamut_map_absolute; return;
+    case GAMUT_MAP_DESATURATE: p->gamut_mapping = &pl_gamut_map_desaturate; return;
+    case GAMUT_MAP_DARKEN:     p->gamut_mapping = &pl_gamut_map_darken; return;
+    case GAMUT_MAP_HIGHLIGHT:  p->gamut_mapping = &pl_gamut_map_highlight; return;
+    case GAMUT_MAP_LINEAR:     p->gamut_mapping = &pl_gamut_map_linear; return;
+#else
+    case GAMUT_MAP_RELATIVE:   p->intent = PL_INTENT_RELATIVE_COLORIMETRIC; return;
+    case GAMUT_MAP_SATURATION: p->intent = PL_INTENT_SATURATION; return;
+    case GAMUT_MAP_ABSOLUTE:   p->intent = PL_INTENT_ABSOLUTE_COLORIMETRIC; return;
+    case GAMUT_MAP_DESATURATE: p->gamut_mode = PL_GAMUT_DESATURATE; return;
+    case GAMUT_MAP_DARKEN:     p->gamut_mode = PL_GAMUT_DARKEN; return;
+    case GAMUT_MAP_HIGHLIGHT:  p->gamut_mode = PL_GAMUT_WARN; return;
+    /* Use defaults for all other cases */
+    default: return;
+#endif
     }
 
-    s->hooks[s->num_hooks++] = hook;
-    return 0;
-}
+    av_assert0(0);
+};
 
 static int find_scaler(AVFilterContext *avctx,
                        const struct pl_filter_config **opt,
@@ -313,30 +347,35 @@ static int update_settings(AVFilterContext *ctx)
 {
     int err = 0;
     LibplaceboContext *s = ctx->priv;
-    enum pl_tone_map_mode tonemapping_mode = s->tonemapping_mode;
-    enum pl_gamut_mode gamut_mode = s->gamut_mode;
+    int gamut_mode = s->gamut_mode;
+    float hybrid_mix = s->hybrid_mix;
     uint8_t color_rgba[4];
 
     RET(av_parse_color(color_rgba, s->fillcolor, -1, s));
 
 #if FF_API_LIBPLACEBO_OPTS
     /* backwards compatibility with older API */
-    if (!tonemapping_mode && (s->desat_str >= 0.0f || s->desat_exp >= 0.0f)) {
-        float str = s->desat_str < 0.0f ? 0.9f : s->desat_str;
-        float exp = s->desat_exp < 0.0f ? 0.2f : s->desat_exp;
-        if (str >= 0.9f && exp <= 0.1f) {
-            tonemapping_mode = PL_TONE_MAP_RGB;
-        } else if (str > 0.1f) {
-            tonemapping_mode = PL_TONE_MAP_HYBRID;
-        } else {
-            tonemapping_mode = PL_TONE_MAP_LUMA;
-        }
+    switch (s->tonemapping_mode) {
+    case 0: /*PL_TONE_MAP_AUTO*/
+        if (s->desat_str >= 0.0f)
+            hybrid_mix = s->desat_str;
+        break;
+    case 1: /*PL_TONE_MAP_RGB*/     hybrid_mix = 1.0f; break;
+    case 2: /*PL_TONE_MAP_HYBRID*/  hybrid_mix = 0.2f; break;
+    case 3: /*PL_TONE_MAP_LUMA*/    hybrid_mix = 0.0f; break;
+    case 4: /*PL_TONE_MAP_MAX*/     hybrid_mix = 0.0f; break;
+    }
+
+    switch (s->intent) {
+    case PL_INTENT_SATURATION:            gamut_mode = GAMUT_MAP_SATURATION; break;
+    case PL_INTENT_RELATIVE_COLORIMETRIC: gamut_mode = GAMUT_MAP_RELATIVE; break;
+    case PL_INTENT_ABSOLUTE_COLORIMETRIC: gamut_mode = GAMUT_MAP_ABSOLUTE; break;
     }
 
     if (s->gamut_warning)
-        gamut_mode = PL_GAMUT_WARN;
+        gamut_mode = GAMUT_MAP_HIGHLIGHT;
     if (s->gamut_clipping)
-        gamut_mode = PL_GAMUT_DESATURATE;
+        gamut_mode = GAMUT_MAP_DESATURATE;
 #endif
 
     s->deband_params = *pl_deband_params(
@@ -359,19 +398,28 @@ static int update_settings(AVFilterContext *ctx)
         .minimum_peak = s->min_peak,
         .scene_threshold_low = s->scene_low,
         .scene_threshold_high = s->scene_high,
+#if PL_API_VER >= 263
+        .percentile = s->percentile,
+#endif
+#if FF_API_LIBPLACEBO_OPTS && PL_API_VER < 256
         .overshoot_margin = s->overshoot,
+#endif
     );
 
     s->color_map_params = *pl_color_map_params(
-        .intent = s->intent,
-        .gamut_mode = gamut_mode,
-        .tone_mapping_function = tonemapping_funcs[s->tonemapping],
-        .tone_mapping_param = s->tonemapping_param,
-        .tone_mapping_mode = tonemapping_mode,
-        .inverse_tone_mapping = s->inverse_tonemapping,
+#if PL_API_VER >= 269
+        .hybrid_mix = hybrid_mix,
+#elif FF_API_LIBPLACEBO_OPTS
+        .tone_mapping_mode = s->tonemapping_mode,
         .tone_mapping_crosstalk = s->crosstalk,
+#endif
+        .tone_mapping_function = get_tonemapping_func(s->tonemapping),
+        .tone_mapping_param = s->tonemapping_param,
+        .inverse_tone_mapping = s->inverse_tonemapping,
         .lut_size = s->tonemapping_lut_size,
     );
+
+    set_gamut_mode(&s->color_map_params, gamut_mode);
 
     s->dither_params = *pl_dither_params(
         .method = s->dithering,
@@ -393,6 +441,9 @@ static int update_settings(AVFilterContext *ctx)
             (float) color_rgba[1] / UINT8_MAX,
             (float) color_rgba[2] / UINT8_MAX,
         },
+#if PL_API_VER >= 277
+        .corner_rounding = s->corner_rounding,
+#endif
 
         .deband_params = s->deband ? &s->deband_params : NULL,
         .sigmoid_params = s->sigmoid ? &pl_sigmoid_default_params : NULL,
@@ -421,6 +472,21 @@ static int update_settings(AVFilterContext *ctx)
 
 fail:
     return err;
+}
+
+static int parse_shader(AVFilterContext *avctx, const void *shader, size_t len)
+{
+    LibplaceboContext *s = avctx->priv;
+    const struct pl_hook *hook;
+
+    hook = pl_mpv_user_shader_parse(s->gpu, shader, len);
+    if (!hook) {
+        av_log(s, AV_LOG_ERROR, "Failed parsing custom shader!\n");
+        return AVERROR(EINVAL);
+    }
+
+    s->hooks[s->num_hooks++] = hook;
+    return update_settings(avctx);
 }
 
 static void libplacebo_uninit(AVFilterContext *avctx);
@@ -482,6 +548,22 @@ fail:
     return err;
 }
 
+#if PL_API_VER >= 278
+static void lock_queue(void *priv, uint32_t qf, uint32_t qidx)
+{
+    AVHWDeviceContext *avhwctx = priv;
+    const AVVulkanDeviceContext *hwctx = avhwctx->hwctx;
+    hwctx->lock_queue(avhwctx, qf, qidx);
+}
+
+static void unlock_queue(void *priv, uint32_t qf, uint32_t qidx)
+{
+    AVHWDeviceContext *avhwctx = priv;
+    const AVVulkanDeviceContext *hwctx = avhwctx->hwctx;
+    hwctx->unlock_queue(avhwctx, qf, qidx);
+}
+#endif
+
 static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwctx)
 {
     int err = 0;
@@ -490,6 +572,7 @@ static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwct
     size_t buf_len;
 
     if (hwctx) {
+#if PL_API_VER >= 278
         /* Import libavfilter vulkan context into libplacebo */
         s->vulkan = pl_vulkan_import(s->log, pl_vulkan_import_params(
             .instance       = hwctx->inst,
@@ -499,6 +582,9 @@ static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwct
             .extensions     = hwctx->enabled_dev_extensions,
             .num_extensions = hwctx->nb_enabled_dev_extensions,
             .features       = &hwctx->device_features,
+            .lock_queue     = lock_queue,
+            .unlock_queue   = unlock_queue,
+            .queue_ctx      = avctx->hw_device_ctx->data,
             .queue_graphics = {
                 .index = hwctx->queue_family_index,
                 .count = hwctx->nb_graphics_queues,
@@ -512,8 +598,15 @@ static int init_vulkan(AVFilterContext *avctx, const AVVulkanDeviceContext *hwct
                 .count = hwctx->nb_tx_queues,
             },
             /* This is the highest version created by hwcontext_vulkan.c */
-            .max_api_version = VK_API_VERSION_1_2,
+            .max_api_version = VK_API_VERSION_1_3,
         ));
+#else
+        av_log(s, AV_LOG_ERROR, "libplacebo version %s too old to import "
+               "Vulkan device, remove it or upgrade libplacebo to >= 5.278\n",
+               PL_VERSION);
+        err = AVERROR_EXTERNAL;
+        goto fail;
+#endif
     } else {
         s->vulkan = pl_vulkan_create(s->log, pl_vulkan_params(
             .queue_count = 0, /* enable all queues for parallelization */
@@ -589,7 +682,7 @@ fail:
 
 static void update_crops(AVFilterContext *ctx,
                          struct pl_frame_mix *mix, struct pl_frame *target,
-                         uint64_t ref_sig, double base_pts)
+                         uint64_t ref_sig, double target_pts)
 {
     LibplaceboContext *s = ctx->priv;
 
@@ -597,11 +690,12 @@ static void update_crops(AVFilterContext *ctx,
         // Mutate the `pl_frame.crop` fields in-place. This is fine because we
         // own the entire pl_queue, and hence, the pointed-at frames.
         struct pl_frame *image = (struct pl_frame *) mix->frames[i];
-        double image_pts = base_pts + mix->timestamps[i];
+        const AVFrame *src = pl_get_mapped_avframe(image);
+        double image_pts = src->pts * av_q2d(ctx->inputs[0]->time_base);
 
         /* Update dynamic variables */
         s->var_values[VAR_IN_T]   = s->var_values[VAR_T]  = image_pts;
-        s->var_values[VAR_OUT_T]  = s->var_values[VAR_OT] = base_pts;
+        s->var_values[VAR_OUT_T]  = s->var_values[VAR_OT] = target_pts;
         s->var_values[VAR_N]      = ctx->outputs[0]->frame_count_out;
 
         /* Clear these explicitly to avoid leaking previous frames' state */
@@ -691,6 +785,13 @@ static int output_frame_mix(AVFilterContext *ctx,
         out->color_trc = s->color_trc;
     if (s->color_primaries >= 0)
         out->color_primaries = s->color_primaries;
+
+    /* Sanity colorspace overrides */
+    if (outdesc->flags & AV_PIX_FMT_FLAG_RGB) {
+        out->colorspace = AVCOL_SPC_RGB;
+    } else if (out->colorspace == AVCOL_SPC_RGB) {
+        out->colorspace = AVCOL_SPC_UNSPECIFIED;
+    }
 
     changed_csp = ref->colorspace      != out->colorspace     ||
                   ref->color_range     != out->color_range    ||
@@ -805,19 +906,12 @@ static int libplacebo_activate(AVFilterContext *ctx)
     if (ret < 0)
         return ret;
 
-    if (ff_inlink_acknowledge_status(inlink, &status, &pts)) {
+    if (!s->status && ff_inlink_acknowledge_status(inlink, &status, &pts)) {
         pts = av_rescale_q_rnd(pts, inlink->time_base, outlink->time_base,
                                AV_ROUND_UP);
-        if (status == AVERROR_EOF) {
-            /* Signal EOF to pl_queue, and enqueue this output frame to
-             * make sure we see PL_QUEUE_EOF returned eventually */
-            pl_queue_push(s->queue, NULL);
-            if (!s->fps.num)
-                av_fifo_write(s->out_pts, &pts, 1);
-        } else {
-            ff_outlink_set_status(outlink, status, pts);
-            return 0;
-        }
+        pl_queue_push(s->queue, NULL); /* Signal EOF to pl_queue */
+        s->status = status;
+        s->status_pts = pts;
     }
 
     if (ff_outlink_frame_wanted(outlink)) {
@@ -827,7 +921,17 @@ static int libplacebo_activate(AVFilterContext *ctx)
         if (s->fps.num) {
             pts = outlink->frame_count_out;
         } else if (av_fifo_peek(s->out_pts, &pts, 1, 0) < 0) {
-            ff_inlink_request_frame(inlink);
+            /* No frames queued */
+            if (s->status) {
+                pts = s->status_pts;
+            } else {
+                ff_inlink_request_frame(inlink);
+                return 0;
+            }
+        }
+
+        if (s->status && pts >= s->status_pts) {
+            ff_outlink_set_status(outlink, s->status, s->status_pts);
             return 0;
         }
 
@@ -1054,6 +1158,7 @@ static const AVOption libplacebo_options[] = {
     { "normalize_sar", "force SAR normalization to 1:1 by adjusting pos_x/y/w/h", OFFSET(normalize_sar), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, STATIC },
     { "pad_crop_ratio", "ratio between padding and cropping when normalizing SAR (0=pad, 1=crop)", OFFSET(pad_crop_ratio), AV_OPT_TYPE_FLOAT, {.dbl=0.0}, 0.0, 1.0, DYNAMIC },
     { "fillcolor", "Background fill color", OFFSET(fillcolor), AV_OPT_TYPE_STRING, {.str = "black"}, .flags = DYNAMIC },
+    { "corner_rounding", "Corner rounding radius", OFFSET(corner_rounding), AV_OPT_TYPE_FLOAT, {.dbl = 0.0}, 0.0, 1.0, .flags = DYNAMIC },
 
     {"colorspace", "select colorspace", OFFSET(colorspace), AV_OPT_TYPE_INT, {.i64=-1}, -1, AVCOL_SPC_NB-1, DYNAMIC, "colorspace"},
     {"auto", "keep the same colorspace",  0, AV_OPT_TYPE_CONST, {.i64=-1},                          INT_MIN, INT_MAX, STATIC, "colorspace"},
@@ -1138,18 +1243,18 @@ static const AVOption libplacebo_options[] = {
     { "minimum_peak", "Peak detection minimum peak", OFFSET(min_peak), AV_OPT_TYPE_FLOAT, {.dbl = 1.0}, 0.0, 100.0, DYNAMIC },
     { "scene_threshold_low", "Scene change low threshold", OFFSET(scene_low), AV_OPT_TYPE_FLOAT, {.dbl = 5.5}, -1.0, 100.0, DYNAMIC },
     { "scene_threshold_high", "Scene change high threshold", OFFSET(scene_high), AV_OPT_TYPE_FLOAT, {.dbl = 10.0}, -1.0, 100.0, DYNAMIC },
-    { "overshoot", "Tone-mapping overshoot margin", OFFSET(overshoot), AV_OPT_TYPE_FLOAT, {.dbl = 0.05}, 0.0, 1.0, DYNAMIC },
+    { "percentile", "Peak detection percentile", OFFSET(percentile), AV_OPT_TYPE_FLOAT, {.dbl = 99.995}, 0.0, 100.0, DYNAMIC },
 
-    { "intent", "Rendering intent", OFFSET(intent), AV_OPT_TYPE_INT, {.i64 = PL_INTENT_RELATIVE_COLORIMETRIC}, 0, 3, DYNAMIC, "intent" },
-        { "perceptual", "Perceptual", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_PERCEPTUAL}, 0, 0, STATIC, "intent" },
-        { "relative", "Relative colorimetric", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_RELATIVE_COLORIMETRIC}, 0, 0, STATIC, "intent" },
-        { "absolute", "Absolute colorimetric", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_ABSOLUTE_COLORIMETRIC}, 0, 0, STATIC, "intent" },
-        { "saturation", "Saturation mapping", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_SATURATION}, 0, 0, STATIC, "intent" },
-    { "gamut_mode", "Gamut-mapping mode", OFFSET(gamut_mode), AV_OPT_TYPE_INT, {.i64 = PL_GAMUT_CLIP}, 0, PL_GAMUT_MODE_COUNT - 1, DYNAMIC, "gamut_mode" },
-        { "clip", "Hard-clip gamut boundary", 0, AV_OPT_TYPE_CONST, {.i64 = PL_GAMUT_CLIP}, 0, 0, STATIC, "gamut_mode" },
-        { "warn", "Highlight out-of-gamut colors", 0, AV_OPT_TYPE_CONST, {.i64 = PL_GAMUT_WARN}, 0, 0, STATIC, "gamut_mode" },
-        { "darken", "Darken image to fit gamut", 0, AV_OPT_TYPE_CONST, {.i64 = PL_GAMUT_DARKEN}, 0, 0, STATIC, "gamut_mode" },
-        { "desaturate", "Colorimetrically desaturate colors", 0, AV_OPT_TYPE_CONST, {.i64 = PL_GAMUT_DESATURATE}, 0, 0, STATIC, "gamut_mode" },
+    { "gamut_mode", "Gamut-mapping mode", OFFSET(gamut_mode), AV_OPT_TYPE_INT, {.i64 = GAMUT_MAP_PERCEPTUAL}, 0, GAMUT_MAP_COUNT - 1, DYNAMIC, "gamut_mode" },
+        { "clip", "Hard-clip (RGB per-channel)", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_CLIP}, 0, 0, STATIC, "gamut_mode" },
+        { "perceptual", "Colorimetric soft clipping", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_PERCEPTUAL}, 0, 0, STATIC, "gamut_mode" },
+        { "relative", "Relative colorimetric clipping", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_RELATIVE}, 0, 0, STATIC, "gamut_mode" },
+        { "saturation", "Saturation mapping (RGB -> RGB)", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_SATURATION}, 0, 0, STATIC, "gamut_mode" },
+        { "absolute", "Absolute colorimetric clipping", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_ABSOLUTE}, 0, 0, STATIC, "gamut_mode" },
+        { "desaturate", "Colorimetrically desaturate colors towards white", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_DESATURATE}, 0, 0, STATIC, "gamut_mode" },
+        { "darken", "Colorimetric clip with bias towards darkening image to fit gamut", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_DARKEN}, 0, 0, STATIC, "gamut_mode" },
+        { "warn", "Highlight out-of-gamut colors", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_HIGHLIGHT}, 0, 0, STATIC, "gamut_mode" },
+        { "linear", "Linearly reduce chromaticity to fit gamut", 0, AV_OPT_TYPE_CONST, {.i64 = GAMUT_MAP_LINEAR}, 0, 0, STATIC, "gamut_mode" },
     { "tonemapping", "Tone-mapping algorithm", OFFSET(tonemapping), AV_OPT_TYPE_INT, {.i64 = TONE_MAP_AUTO}, 0, TONE_MAP_COUNT - 1, DYNAMIC, "tonemap" },
         { "auto", "Automatic selection", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_AUTO}, 0, 0, STATIC, "tonemap" },
         { "clip", "No tone mapping (clip", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_CLIP}, 0, 0, STATIC, "tonemap" },
@@ -1166,22 +1271,29 @@ static const AVOption libplacebo_options[] = {
         { "gamma", "Gamma function with knee", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_GAMMA}, 0, 0, STATIC, "tonemap" },
         { "linear", "Perceptually linear stretch", 0, AV_OPT_TYPE_CONST, {.i64 = TONE_MAP_LINEAR}, 0, 0, STATIC, "tonemap" },
     { "tonemapping_param", "Tunable parameter for some tone-mapping functions", OFFSET(tonemapping_param), AV_OPT_TYPE_FLOAT, {.dbl = 0.0}, 0.0, 100.0, .flags = DYNAMIC },
-    { "tonemapping_mode", "Tone-mapping mode", OFFSET(tonemapping_mode), AV_OPT_TYPE_INT, {.i64 = PL_TONE_MAP_AUTO}, 0, PL_TONE_MAP_MODE_COUNT - 1, DYNAMIC, "tonemap_mode" },
-        { "auto", "Automatic selection", 0, AV_OPT_TYPE_CONST, {.i64 = PL_TONE_MAP_AUTO}, 0, 0, STATIC, "tonemap_mode" },
-        { "rgb", "Per-channel (RGB)", 0, AV_OPT_TYPE_CONST, {.i64 = PL_TONE_MAP_RGB}, 0, 0, STATIC, "tonemap_mode" },
-        { "max", "Maximum component", 0, AV_OPT_TYPE_CONST, {.i64 = PL_TONE_MAP_MAX}, 0, 0, STATIC, "tonemap_mode" },
-        { "hybrid", "Hybrid of Luma/RGB", 0, AV_OPT_TYPE_CONST, {.i64 = PL_TONE_MAP_HYBRID}, 0, 0, STATIC, "tonemap_mode" },
-        { "luma", "Luminance", 0, AV_OPT_TYPE_CONST, {.i64 = PL_TONE_MAP_LUMA}, 0, 0, STATIC, "tonemap_mode" },
     { "inverse_tonemapping", "Inverse tone mapping (range expansion)", OFFSET(inverse_tonemapping), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
-    { "tonemapping_crosstalk", "Crosstalk factor for tone-mapping", OFFSET(crosstalk), AV_OPT_TYPE_FLOAT, {.dbl = 0.04}, 0.0, 0.30, DYNAMIC },
     { "tonemapping_lut_size", "Tone-mapping LUT size", OFFSET(tonemapping_lut_size), AV_OPT_TYPE_INT, {.i64 = 256}, 2, 1024, DYNAMIC },
+    { "hybrid_mix", "Tone-mapping hybrid LMS mixing coefficient", OFFSET(hybrid_mix), AV_OPT_TYPE_FLOAT, {.dbl = 0.20}, 0.0, 1.00, DYNAMIC },
 
 #if FF_API_LIBPLACEBO_OPTS
     /* deprecated options for backwards compatibility, defaulting to -1 to not override the new defaults */
     { "desaturation_strength", "Desaturation strength", OFFSET(desat_str), AV_OPT_TYPE_FLOAT, {.dbl = -1.0}, -1.0, 1.0, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
     { "desaturation_exponent", "Desaturation exponent", OFFSET(desat_exp), AV_OPT_TYPE_FLOAT, {.dbl = -1.0}, -1.0, 10.0, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
     { "gamut_warning", "Highlight out-of-gamut colors", OFFSET(gamut_warning), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
-    { "gamut_clipping", "Enable colorimetric gamut clipping", OFFSET(gamut_clipping), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
+    { "gamut_clipping", "Enable desaturating colorimetric gamut clipping", OFFSET(gamut_clipping), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
+    { "intent", "Rendering intent", OFFSET(intent), AV_OPT_TYPE_INT, {.i64 = PL_INTENT_PERCEPTUAL}, 0, 3, DYNAMIC | AV_OPT_FLAG_DEPRECATED, "intent" },
+        { "perceptual", "Perceptual", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_PERCEPTUAL}, 0, 0, STATIC, "intent" },
+        { "relative", "Relative colorimetric", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_RELATIVE_COLORIMETRIC}, 0, 0, STATIC, "intent" },
+        { "absolute", "Absolute colorimetric", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_ABSOLUTE_COLORIMETRIC}, 0, 0, STATIC, "intent" },
+        { "saturation", "Saturation mapping", 0, AV_OPT_TYPE_CONST, {.i64 = PL_INTENT_SATURATION}, 0, 0, STATIC, "intent" },
+    { "tonemapping_mode", "Tone-mapping mode", OFFSET(tonemapping_mode), AV_OPT_TYPE_INT, {.i64 = 0}, 0, 4, DYNAMIC | AV_OPT_FLAG_DEPRECATED, "tonemap_mode" },
+        { "auto", "Automatic selection", 0, AV_OPT_TYPE_CONST, {.i64 = 0}, 0, 0, STATIC, "tonemap_mode" },
+        { "rgb", "Per-channel (RGB)", 0, AV_OPT_TYPE_CONST, {.i64 = 1}, 0, 0, STATIC, "tonemap_mode" },
+        { "max", "Maximum component", 0, AV_OPT_TYPE_CONST, {.i64 = 2}, 0, 0, STATIC, "tonemap_mode" },
+        { "hybrid", "Hybrid of Luma/RGB", 0, AV_OPT_TYPE_CONST, {.i64 = 3}, 0, 0, STATIC, "tonemap_mode" },
+        { "luma", "Luminance", 0, AV_OPT_TYPE_CONST, {.i64 = 4}, 0, 0, STATIC, "tonemap_mode" },
+    { "tonemapping_crosstalk", "Crosstalk factor for tone-mapping", OFFSET(crosstalk), AV_OPT_TYPE_FLOAT, {.dbl = 0.04}, 0.0, 0.30, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
+    { "overshoot", "Tone-mapping overshoot margin", OFFSET(overshoot), AV_OPT_TYPE_FLOAT, {.dbl = 0.05}, 0.0, 1.0, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
 #endif
 
     { "dithering", "Dither method to use", OFFSET(dithering), AV_OPT_TYPE_INT, {.i64 = PL_DITHER_BLUE_NOISE}, -1, PL_DITHER_METHOD_COUNT - 1, DYNAMIC, "dither" },

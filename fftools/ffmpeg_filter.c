@@ -55,7 +55,27 @@ static FilterGraphPriv *fgp_from_fg(FilterGraph *fg)
 typedef struct InputFilterPriv {
     InputFilter ifilter;
 
+    InputStream *ist;
+
+    // used to hold submitted input
+    AVFrame *frame;
+
+    // filter data type
+    enum AVMediaType type;
+    // source data type: AVMEDIA_TYPE_SUBTITLE for sub2video,
+    // same as type otherwise
+    enum AVMediaType type_src;
+
     int eof;
+
+    // parameters configured for this input
+    int format;
+
+    int width, height;
+    AVRational sample_aspect_ratio;
+
+    int sample_rate;
+    AVChannelLayout ch_layout;
 
     AVRational time_base;
 
@@ -63,7 +83,8 @@ typedef struct InputFilterPriv {
 
     AVBufferRef *hw_frames_ctx;
 
-    int32_t *displaymatrix;
+    int     displaymatrix_present;
+    int32_t displaymatrix[9];
 
     // fallback parameters to use when no input is ever sent
     struct {
@@ -235,16 +256,24 @@ static OutputFilter *ofilter_alloc(FilterGraph *fg)
     return ofilter;
 }
 
-static InputFilter *ifilter_alloc(FilterGraph *fg)
+static InputFilter *ifilter_alloc(FilterGraph *fg, InputStream *ist)
 {
     InputFilterPriv *ifp = allocate_array_elem(&fg->inputs, sizeof(*ifp),
                                                &fg->nb_inputs);
     InputFilter *ifilter = &ifp->ifilter;
 
     ifilter->graph  = fg;
-    ifilter->format = -1;
 
+    ifp->frame = av_frame_alloc();
+    if (!ifp->frame)
+        report_and_exit(AVERROR(ENOMEM));
+
+    ifp->format          = -1;
     ifp->fallback.format = -1;
+    ifp->ist             = ist;
+    ifp->type_src        = ist->st->codecpar->codec_type;
+    ifp->type            = ifp->type_src == AVMEDIA_TYPE_SUBTITLE ?
+                           AVMEDIA_TYPE_VIDEO : ifp->type_src;
 
     ifp->frame_queue = av_fifo_alloc2(8, sizeof(AVFrame*), AV_FIFO_FLAG_AUTO_GROW);
     if (!ifp->frame_queue)
@@ -266,7 +295,7 @@ void fg_free(FilterGraph **pfg)
     for (int j = 0; j < fg->nb_inputs; j++) {
         InputFilter *ifilter = fg->inputs[j];
         InputFilterPriv *ifp = ifp_from_ifilter(ifilter);
-        struct InputStream *ist = ifilter->ist;
+        InputStream     *ist = ifp->ist;
 
         if (ifp->frame_queue) {
             AVFrame *frame;
@@ -274,7 +303,6 @@ void fg_free(FilterGraph **pfg)
                 av_frame_free(&frame);
             av_fifo_freep2(&ifp->frame_queue);
         }
-        av_freep(&ifp->displaymatrix);
         if (ist->sub2video.sub_queue) {
             AVSubtitle sub;
             while (av_fifo_read(ist->sub2video.sub_queue, &sub, 1) >= 0)
@@ -283,6 +311,8 @@ void fg_free(FilterGraph **pfg)
         }
 
         av_channel_layout_uninit(&ifp->fallback.ch_layout);
+
+        av_frame_free(&ifp->frame);
 
         av_buffer_unref(&ifp->hw_frames_ctx);
         av_freep(&ifilter->name);
@@ -325,6 +355,7 @@ int init_simple_filtergraph(InputStream *ist, OutputStream *ost)
     FilterGraph *fg;
     OutputFilter *ofilter;
     InputFilter  *ifilter;
+    int ret;
 
     fg = fg_create(NULL);
     if (!fg)
@@ -335,10 +366,11 @@ int init_simple_filtergraph(InputStream *ist, OutputStream *ost)
 
     ost->filter = ofilter;
 
-    ifilter         = ifilter_alloc(fg);
-    ifilter->ist    = ist;
+    ifilter = ifilter_alloc(fg, ist);
 
-    ist_filter_add(ist, ifilter, 1);
+    ret = ist_filter_add(ist, ifilter, 1);
+    if (ret < 0)
+        return ret;
 
     return 0;
 }
@@ -366,7 +398,7 @@ static void init_input_filter(FilterGraph *fg, AVFilterInOut *in)
     InputStream *ist = NULL;
     enum AVMediaType type = avfilter_pad_get_type(in->filter_ctx->input_pads, in->pad_idx);
     InputFilter *ifilter;
-    int i;
+    int i, ret;
 
     // TODO: support other filter types
     if (type != AVMEDIA_TYPE_VIDEO && type != AVMEDIA_TYPE_AUDIO) {
@@ -405,19 +437,8 @@ static void init_input_filter(FilterGraph *fg, AVFilterInOut *in)
             exit_program(1);
         }
         ist = input_files[file_idx]->streams[st->index];
-        if (ist->user_set_discard == AVDISCARD_ALL) {
-            av_log(NULL, AV_LOG_FATAL, "Stream specifier '%s' in filtergraph description %s "
-                   "matches a disabled input stream.\n", p, fgp->graph_desc);
-            exit_program(1);
-        }
     } else {
-        /* find the first unused stream of corresponding type */
-        for (ist = ist_iter(NULL); ist; ist = ist_iter(ist)) {
-            if (ist->user_set_discard == AVDISCARD_ALL)
-                continue;
-            if (ist->dec_ctx->codec_type == type && ist->discard)
-                break;
-        }
+        ist = ist_find_unused(type);
         if (!ist) {
             av_log(NULL, AV_LOG_FATAL, "Cannot find a matching stream for "
                    "unlabeled input pad %d on filter %s\n", in->pad_idx,
@@ -427,12 +448,16 @@ static void init_input_filter(FilterGraph *fg, AVFilterInOut *in)
     }
     av_assert0(ist);
 
-    ifilter = ifilter_alloc(fg);
-    ifilter->ist    = ist;
-    ifilter->type   = ist->st->codecpar->codec_type;
+    ifilter         = ifilter_alloc(fg, ist);
     ifilter->name   = describe_filter_link(fg, in, 1);
 
-    ist_filter_add(ist, ifilter, 0);
+    ret = ist_filter_add(ist, ifilter, 0);
+    if (ret < 0) {
+        av_log(NULL, AV_LOG_ERROR,
+               "Error binding an input stream to complex filtergraph input %s.\n",
+               in->name ? in->name : "");
+        exit_program(1);
+    }
 }
 
 static int read_binary(const char *path, uint8_t **data, int *len)
@@ -949,14 +974,15 @@ void check_filter_outputs(void)
 
 static int sub2video_prepare(InputStream *ist, InputFilter *ifilter)
 {
+    InputFilterPriv *ifp = ifp_from_ifilter(ifilter);
     AVFormatContext *avf = input_files[ist->file_index]->ctx;
     int i, w, h;
 
     /* Compute the size of the canvas for the subtitles stream.
        If the subtitles codecpar has set a size, use it. Otherwise use the
        maximum dimensions of the video streams in the same file. */
-    w = ifilter->width;
-    h = ifilter->height;
+    w = ifp->width;
+    h = ifp->height;
     if (!(w && h)) {
         for (i = 0; i < avf->nb_streams; i++) {
             if (avf->streams[i]->codecpar->codec_type == AVMEDIA_TYPE_VIDEO) {
@@ -970,15 +996,15 @@ static int sub2video_prepare(InputStream *ist, InputFilter *ifilter)
         }
         av_log(avf, AV_LOG_INFO, "sub2video: using %dx%d canvas\n", w, h);
     }
-    ist->sub2video.w = ifilter->width  = w;
-    ist->sub2video.h = ifilter->height = h;
+    ist->sub2video.w = ifp->width  = w;
+    ist->sub2video.h = ifp->height = h;
 
-    ifilter->width  = ist->dec_ctx->width  ? ist->dec_ctx->width  : ist->sub2video.w;
-    ifilter->height = ist->dec_ctx->height ? ist->dec_ctx->height : ist->sub2video.h;
+    ifp->width  = ist->dec_ctx->width  ? ist->dec_ctx->width  : ist->sub2video.w;
+    ifp->height = ist->dec_ctx->height ? ist->dec_ctx->height : ist->sub2video.h;
 
     /* rectangles are AV_PIX_FMT_PAL8, but we have no guarantee that the
        palettes for all rectangles are identical or compatible */
-    ifilter->format = AV_PIX_FMT_RGB32;
+    ifp->format = AV_PIX_FMT_RGB32;
 
     ist->sub2video.frame = av_frame_alloc();
     if (!ist->sub2video.frame)
@@ -1002,7 +1028,7 @@ static int configure_input_video_filter(FilterGraph *fg, InputFilter *ifilter,
     AVFilterContext *last_filter;
     const AVFilter *buffer_filt = avfilter_get_by_name("buffer");
     const AVPixFmtDescriptor *desc;
-    InputStream *ist = ifilter->ist;
+    InputStream *ist = ifp->ist;
     InputFile     *f = input_files[ist->file_index];
     AVRational fr = ist->framerate;
     AVRational sar;
@@ -1035,19 +1061,19 @@ static int configure_input_video_filter(FilterGraph *fg, InputFilter *ifilter,
     ifp->time_base =  ist->framerate.num ? av_inv_q(ist->framerate) :
                                            ist->st->time_base;
 
-    sar = ifilter->sample_aspect_ratio;
+    sar = ifp->sample_aspect_ratio;
     if(!sar.den)
         sar = (AVRational){0,1};
     av_bprint_init(&args, 0, AV_BPRINT_SIZE_AUTOMATIC);
     av_bprintf(&args,
              "video_size=%dx%d:pix_fmt=%d:time_base=%d/%d:"
              "pixel_aspect=%d/%d",
-             ifilter->width, ifilter->height, ifilter->format,
+             ifp->width, ifp->height, ifp->format,
              ifp->time_base.num, ifp->time_base.den, sar.num, sar.den);
     if (fr.num && fr.den)
         av_bprintf(&args, ":frame_rate=%d/%d", fr.num, fr.den);
     snprintf(name, sizeof(name), "graph %d input from stream %d:%d", fg->index,
-             ist->file_index, ist->st->index);
+             ist->file_index, ist->index);
 
 
     if ((ret = avfilter_graph_create_filter(&ifilter->filter, buffer_filt, name,
@@ -1060,7 +1086,7 @@ static int configure_input_video_filter(FilterGraph *fg, InputFilter *ifilter,
     av_freep(&par);
     last_filter = ifilter->filter;
 
-    desc = av_pix_fmt_desc_get(ifilter->format);
+    desc = av_pix_fmt_desc_get(ifp->format);
     av_assert0(desc);
 
     // TODO: insert hwaccel enabled filters like transpose_vaapi into the graph
@@ -1068,7 +1094,7 @@ static int configure_input_video_filter(FilterGraph *fg, InputFilter *ifilter,
         int32_t *displaymatrix = ifp->displaymatrix;
         double theta;
 
-        if (!displaymatrix)
+        if (!ifp->displaymatrix_present)
             displaymatrix = (int32_t *)av_stream_get_side_data(ist->st, AV_PKT_DATA_DISPLAYMATRIX, NULL);
         theta = get_rotation(displaymatrix);
 
@@ -1101,7 +1127,7 @@ static int configure_input_video_filter(FilterGraph *fg, InputFilter *ifilter,
     }
 
     snprintf(name, sizeof(name), "trim_in_%d_%d",
-             ist->file_index, ist->st->index);
+             ist->file_index, ist->index);
     if (copy_ts) {
         tsoffset = f->start_time == AV_NOPTS_VALUE ? 0 : f->start_time;
         if (!start_at_zero && f->ctx->start_time != AV_NOPTS_VALUE)
@@ -1128,7 +1154,7 @@ static int configure_input_audio_filter(FilterGraph *fg, InputFilter *ifilter,
     InputFilterPriv *ifp = ifp_from_ifilter(ifilter);
     AVFilterContext *last_filter;
     const AVFilter *abuffer_filt = avfilter_get_by_name("abuffer");
-    InputStream *ist = ifilter->ist;
+    InputStream *ist = ifp->ist;
     InputFile     *f = input_files[ist->file_index];
     AVBPrint args;
     char name[255];
@@ -1140,21 +1166,21 @@ static int configure_input_audio_filter(FilterGraph *fg, InputFilter *ifilter,
         return AVERROR(EINVAL);
     }
 
-    ifp->time_base = (AVRational){ 1, ifilter->sample_rate };
+    ifp->time_base = (AVRational){ 1, ifp->sample_rate };
 
     av_bprint_init(&args, 0, AV_BPRINT_SIZE_AUTOMATIC);
     av_bprintf(&args, "time_base=%d/%d:sample_rate=%d:sample_fmt=%s",
                ifp->time_base.num, ifp->time_base.den,
-             ifilter->sample_rate,
-             av_get_sample_fmt_name(ifilter->format));
-    if (av_channel_layout_check(&ifilter->ch_layout) &&
-        ifilter->ch_layout.order != AV_CHANNEL_ORDER_UNSPEC) {
+               ifp->sample_rate,
+               av_get_sample_fmt_name(ifp->format));
+    if (av_channel_layout_check(&ifp->ch_layout) &&
+        ifp->ch_layout.order != AV_CHANNEL_ORDER_UNSPEC) {
         av_bprintf(&args, ":channel_layout=");
-        av_channel_layout_describe_bprint(&ifilter->ch_layout, &args);
+        av_channel_layout_describe_bprint(&ifp->ch_layout, &args);
     } else
-        av_bprintf(&args, ":channels=%d", ifilter->ch_layout.nb_channels);
+        av_bprintf(&args, ":channels=%d", ifp->ch_layout.nb_channels);
     snprintf(name, sizeof(name), "graph_%d_in_%d_%d", fg->index,
-             ist->file_index, ist->st->index);
+             ist->file_index, ist->index);
 
     if ((ret = avfilter_graph_create_filter(&ifilter->filter, abuffer_filt,
                                             name, args.str, NULL,
@@ -1163,7 +1189,7 @@ static int configure_input_audio_filter(FilterGraph *fg, InputFilter *ifilter,
     last_filter = ifilter->filter;
 
     snprintf(name, sizeof(name), "trim for input stream %d:%d",
-             ist->file_index, ist->st->index);
+             ist->file_index, ist->index);
     if (copy_ts) {
         tsoffset = f->start_time == AV_NOPTS_VALUE ? 0 : f->start_time;
         if (!start_at_zero && f->ctx->start_time != AV_NOPTS_VALUE)
@@ -1184,13 +1210,7 @@ static int configure_input_audio_filter(FilterGraph *fg, InputFilter *ifilter,
 static int configure_input_filter(FilterGraph *fg, InputFilter *ifilter,
                                   AVFilterInOut *in)
 {
-    if (!ifilter->ist->dec) {
-        av_log(NULL, AV_LOG_ERROR,
-               "No decoder for stream #%d:%d, filtering impossible\n",
-               ifilter->ist->file_index, ifilter->ist->st->index);
-        return AVERROR_DECODER_NOT_FOUND;
-    }
-    switch (avfilter_pad_get_type(in->filter_ctx->input_pads, in->pad_idx)) {
+    switch (ifp_from_ifilter(ifilter)->type) {
     case AVMEDIA_TYPE_VIDEO: return configure_input_video_filter(fg, ifilter, in);
     case AVMEDIA_TYPE_AUDIO: return configure_input_audio_filter(fg, ifilter, in);
     default: av_assert0(0); return 0;
@@ -1369,7 +1389,7 @@ int configure_filtergraph(FilterGraph *fg)
 
     /* process queued up subtitle packets */
     for (i = 0; i < fg->nb_inputs; i++) {
-        InputStream *ist = fg->inputs[i]->ist;
+        InputStream *ist = ifp_from_ifilter(fg->inputs[i])->ist;
         if (ist->sub2video.sub_queue && ist->sub2video.frame) {
             AVSubtitle tmp;
             while (av_fifo_read(ist->sub2video.sub_queue, &tmp, 1) >= 0) {
@@ -1419,23 +1439,36 @@ static int ifilter_parameters_from_frame(InputFilter *ifilter, const AVFrame *fr
     if (ret < 0)
         return ret;
 
-    ifilter->format = frame->format;
+    ifp->format              = frame->format;
 
-    ifilter->width               = frame->width;
-    ifilter->height              = frame->height;
-    ifilter->sample_aspect_ratio = frame->sample_aspect_ratio;
+    ifp->width               = frame->width;
+    ifp->height              = frame->height;
+    ifp->sample_aspect_ratio = frame->sample_aspect_ratio;
 
-    ifilter->sample_rate         = frame->sample_rate;
-    ret = av_channel_layout_copy(&ifilter->ch_layout, &frame->ch_layout);
+    ifp->sample_rate         = frame->sample_rate;
+    ret = av_channel_layout_copy(&ifp->ch_layout, &frame->ch_layout);
     if (ret < 0)
         return ret;
 
-    av_freep(&ifp->displaymatrix);
     sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX);
     if (sd)
-        ifp->displaymatrix = av_memdup(sd->data, sizeof(int32_t) * 9);
+        memcpy(ifp->displaymatrix, sd->data, sizeof(ifp->displaymatrix));
+    ifp->displaymatrix_present = !!sd;
 
     return 0;
+}
+
+// Filters can be configured only if the formats of all inputs are known.
+int ifilter_has_all_input_formats(FilterGraph *fg)
+{
+    int i;
+    for (i = 0; i < fg->nb_inputs; i++) {
+        InputFilterPriv *ifp = ifp_from_ifilter(fg->inputs[i]);
+        if (ifp->format < 0 && (ifp->type_src == AVMEDIA_TYPE_AUDIO ||
+                                ifp->type_src == AVMEDIA_TYPE_VIDEO))
+            return 0;
+    }
+    return 1;
 }
 
 int filtergraph_is_simple(FilterGraph *fg)
@@ -1514,20 +1547,34 @@ int ifilter_send_eof(InputFilter *ifilter, int64_t pts, AVRational tb)
         if (ret < 0)
             return ret;
     } else {
-        // the filtergraph was never configured, use the fallback parameters
-        ifilter->format                 = ifp->fallback.format;
-        ifilter->sample_rate            = ifp->fallback.sample_rate;
-        ifilter->width                  = ifp->fallback.width;
-        ifilter->height                 = ifp->fallback.height;
-        ifilter->sample_aspect_ratio    = ifp->fallback.sample_aspect_ratio;
+        if (ifp->format < 0) {
+            // the filtergraph was never configured, use the fallback parameters
+            ifp->format                 = ifp->fallback.format;
+            ifp->sample_rate            = ifp->fallback.sample_rate;
+            ifp->width                  = ifp->fallback.width;
+            ifp->height                 = ifp->fallback.height;
+            ifp->sample_aspect_ratio    = ifp->fallback.sample_aspect_ratio;
 
-        ret = av_channel_layout_copy(&ifilter->ch_layout,
-                                     &ifp->fallback.ch_layout);
-        if (ret < 0)
-            return ret;
+            ret = av_channel_layout_copy(&ifp->ch_layout,
+                                         &ifp->fallback.ch_layout);
+            if (ret < 0)
+                return ret;
 
-        if (ifilter->format < 0 && (ifilter->type == AVMEDIA_TYPE_AUDIO || ifilter->type == AVMEDIA_TYPE_VIDEO)) {
-            av_log(NULL, AV_LOG_ERROR, "Cannot determine format of input stream %d:%d after EOF\n", ifilter->ist->file_index, ifilter->ist->st->index);
+            if (ifilter_has_all_input_formats(ifilter->graph)) {
+                ret = configure_filtergraph(ifilter->graph);
+                if (ret < 0) {
+                    av_log(NULL, AV_LOG_ERROR, "Error initializing filters!\n");
+                    return ret;
+                }
+            }
+        }
+
+        if (ifp->format < 0 &&
+            (ifp->type_src == AVMEDIA_TYPE_AUDIO ||
+             ifp->type_src == AVMEDIA_TYPE_VIDEO)) {
+            av_log(NULL, AV_LOG_ERROR,
+                   "Cannot determine format of input stream %d:%d after EOF\n",
+                   ifp->ist->file_index, ifp->ist->index);
             return AVERROR_INVALIDDATA;
         }
     }
@@ -1541,26 +1588,22 @@ int ifilter_send_frame(InputFilter *ifilter, AVFrame *frame, int keep_reference)
     FilterGraph *fg = ifilter->graph;
     AVFrameSideData *sd;
     int need_reinit, ret;
-    int buffersrc_flags = AV_BUFFERSRC_FLAG_PUSH;
-
-    if (keep_reference)
-        buffersrc_flags |= AV_BUFFERSRC_FLAG_KEEP_REF;
 
     /* determine if the parameters for this input changed */
-    need_reinit = ifilter->format != frame->format;
+    need_reinit = ifp->format != frame->format;
 
-    switch (ifilter->ist->par->codec_type) {
+    switch (ifp->type) {
     case AVMEDIA_TYPE_AUDIO:
-        need_reinit |= ifilter->sample_rate    != frame->sample_rate ||
-                       av_channel_layout_compare(&ifilter->ch_layout, &frame->ch_layout);
+        need_reinit |= ifp->sample_rate    != frame->sample_rate ||
+                       av_channel_layout_compare(&ifp->ch_layout, &frame->ch_layout);
         break;
     case AVMEDIA_TYPE_VIDEO:
-        need_reinit |= ifilter->width  != frame->width ||
-                       ifilter->height != frame->height;
+        need_reinit |= ifp->width  != frame->width ||
+                       ifp->height != frame->height;
         break;
     }
 
-    if (!ifilter->ist->reinit_filters && fg->graph)
+    if (!ifp->ist->reinit_filters && fg->graph)
         need_reinit = 0;
 
     if (!!ifp->hw_frames_ctx != !!frame->hw_frames_ctx ||
@@ -1568,9 +1611,10 @@ int ifilter_send_frame(InputFilter *ifilter, AVFrame *frame, int keep_reference)
         need_reinit = 1;
 
     if (sd = av_frame_get_side_data(frame, AV_FRAME_DATA_DISPLAYMATRIX)) {
-        if (!ifp->displaymatrix || memcmp(sd->data, ifp->displaymatrix, sizeof(int32_t) * 9))
+        if (!ifp->displaymatrix_present ||
+            memcmp(sd->data, ifp->displaymatrix, sizeof(ifp->displaymatrix)))
             need_reinit = 1;
-    } else if (ifp->displaymatrix)
+    } else if (ifp->displaymatrix_present)
         need_reinit = 1;
 
     if (need_reinit) {
@@ -1606,8 +1650,27 @@ int ifilter_send_frame(InputFilter *ifilter, AVFrame *frame, int keep_reference)
         }
     }
 
-    ret = av_buffersrc_add_frame_flags(ifilter->filter, frame, buffersrc_flags);
+    if (keep_reference) {
+        ret = av_frame_ref(ifp->frame, frame);
+        if (ret < 0)
+            return ret;
+    } else
+        av_frame_move_ref(ifp->frame, frame);
+    frame = ifp->frame;
+
+    frame->pts       = av_rescale_q(frame->pts,      frame->time_base, ifp->time_base);
+    frame->duration  = av_rescale_q(frame->duration, frame->time_base, ifp->time_base);
+    frame->time_base = ifp->time_base;
+#if LIBAVUTIL_VERSION_MAJOR < 59
+    AV_NOWARN_DEPRECATED(
+    frame->pkt_duration = frame->duration;
+    )
+#endif
+
+    ret = av_buffersrc_add_frame_flags(ifilter->filter, frame,
+                                       AV_BUFFERSRC_FLAG_PUSH);
     if (ret < 0) {
+        av_frame_unref(frame);
         if (ret != AVERROR_EOF)
             av_log(NULL, AV_LOG_ERROR, "Error while filtering: %s\n", av_err2str(ret));
         return ret;
@@ -1637,8 +1700,8 @@ int fg_transcode_step(FilterGraph *graph, InputStream **best_ist)
         for (int i = 0; i < graph->nb_inputs; i++) {
             InputFilter *ifilter = graph->inputs[i];
             InputFilterPriv *ifp = ifp_from_ifilter(ifilter);
-            if (!ifilter->ist->got_output && !ifp->eof) {
-                *best_ist = ifilter->ist;
+            if (ifp->format < 0 && !ifp->eof) {
+                *best_ist = ifp->ist;
                 return 0;
             }
         }
@@ -1668,7 +1731,7 @@ int fg_transcode_step(FilterGraph *graph, InputStream **best_ist)
         InputFilter *ifilter = graph->inputs[i];
         InputFilterPriv *ifp = ifp_from_ifilter(ifilter);
 
-        ist = ifilter->ist;
+        ist = ifp->ist;
         if (input_files[ist->file_index]->eagain || ifp->eof)
             continue;
         nb_requests = av_buffersrc_get_nb_failed_requests(ifilter->filter);

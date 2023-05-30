@@ -113,6 +113,8 @@ typedef struct Demuxer {
     int                   thread_queue_size;
     pthread_t             thread;
     int                   non_blocking;
+
+    int                   read_started;
 } Demuxer;
 
 typedef struct DemuxMsg {
@@ -128,6 +130,16 @@ static DemuxStream *ds_from_ist(InputStream *ist)
 static Demuxer *demuxer_from_ifile(InputFile *f)
 {
     return (Demuxer*)f;
+}
+
+InputStream *ist_find_unused(enum AVMediaType type)
+{
+    for (InputStream *ist = ist_iter(NULL); ist; ist = ist_iter(ist)) {
+        if (ist->par->codec_type == type && ist->discard &&
+            ist->user_set_discard != AVDISCARD_ALL)
+            return ist;
+    }
+    return NULL;
 }
 
 static void report_new_stream(Demuxer *d, const AVPacket *pkt)
@@ -236,12 +248,10 @@ static void ts_discontinuity_detect(Demuxer *d, InputStream *ist,
             if (FFABS(delta) > 1LL * dts_delta_threshold * AV_TIME_BASE ||
                 pkt_dts + AV_TIME_BASE/10 < ds->dts) {
                 d->ts_offset_discont -= delta;
-                av_log(NULL, AV_LOG_WARNING,
-                       "timestamp discontinuity for stream #%d:%d "
-                       "(id=%d, type=%s): %"PRId64", new offset= %"PRId64"\n",
-                       ist->file_index, ist->st->index, ist->st->id,
-                       av_get_media_type_string(ist->par->codec_type),
-                       delta, d->ts_offset_discont);
+                av_log(ist, AV_LOG_WARNING,
+                       "timestamp discontinuity "
+                       "(stream id=%d): %"PRId64", new offset= %"PRId64"\n",
+                       ist->st->id, delta, d->ts_offset_discont);
                 pkt->dts -= av_rescale_q(delta, AV_TIME_BASE_Q, pkt->time_base);
                 if (pkt->pts != AV_NOPTS_VALUE)
                     pkt->pts -= av_rescale_q(delta, AV_TIME_BASE_Q, pkt->time_base);
@@ -724,6 +734,8 @@ static int thread_start(Demuxer *d)
         goto fail;
     }
 
+    d->read_started = 1;
+
     return 0;
 fail:
     av_thread_message_queue_free(&d->in_thread_queue);
@@ -767,6 +779,9 @@ static void demux_final_stats(Demuxer *d)
         DemuxStream  *ds = ds_from_ist(ist);
         enum AVMediaType type = ist->par->codec_type;
 
+        if (ist->discard || type == AVMEDIA_TYPE_ATTACHMENT)
+            continue;
+
         total_size    += ds->data_size;
         total_packets += ds->nb_packets;
 
@@ -776,8 +791,9 @@ static void demux_final_stats(Demuxer *d)
                ds->nb_packets, ds->data_size);
 
         if (ist->decoding_needed) {
-            av_log(f, AV_LOG_VERBOSE, "%"PRIu64" frames decoded",
-                   ist->frames_decoded);
+            av_log(f, AV_LOG_VERBOSE,
+                   "%"PRIu64" frames decoded; %"PRIu64" decode errors",
+                   ist->frames_decoded, ist->decode_errors);
             if (type == AVMEDIA_TYPE_AUDIO)
                 av_log(f, AV_LOG_VERBOSE, " (%"PRIu64" samples)", ist->samples_decoded);
             av_log(f, AV_LOG_VERBOSE, "; ");
@@ -797,8 +813,8 @@ static void ist_free(InputStream **pist)
     if (!ist)
         return;
 
-    av_frame_free(&ist->decoded_frame);
-    av_packet_free(&ist->pkt);
+    dec_free(&ist->decoder);
+
     av_dict_free(&ist->decoder_opts);
     avsubtitle_free(&ist->prev_sub.subtitle);
     av_frame_free(&ist->sub2video.frame);
@@ -822,7 +838,7 @@ void ifile_close(InputFile **pf)
 
     thread_stop(d);
 
-    if (f->ctx)
+    if (d->read_started)
         demux_final_stats(d);
 
     for (int i = 0; i < f->nb_streams; i++)
@@ -834,9 +850,15 @@ void ifile_close(InputFile **pf)
     av_freep(pf);
 }
 
-static void ist_use(InputStream *ist, int decoding_needed)
+static int ist_use(InputStream *ist, int decoding_needed)
 {
     DemuxStream *ds = ds_from_ist(ist);
+
+    if (ist->user_set_discard == AVDISCARD_ALL) {
+        av_log(ist, AV_LOG_ERROR, "Cannot %s a disabled input stream\n",
+               decoding_needed ? "decode" : "streamcopy");
+        return AVERROR(EINVAL);
+    }
 
     ist->discard          = 0;
     ist->st->discard      = ist->user_set_discard;
@@ -846,23 +868,33 @@ static void ist_use(InputStream *ist, int decoding_needed)
     if (decoding_needed && !avcodec_is_open(ist->dec_ctx)) {
         int ret = dec_open(ist);
         if (ret < 0)
-            report_and_exit(ret);
+            return ret;
     }
+
+    return 0;
 }
 
-void ist_output_add(InputStream *ist, OutputStream *ost)
-{
-    ist_use(ist, ost->enc ? DECODING_FOR_OST : 0);
-
-    GROW_ARRAY(ist->outputs, ist->nb_outputs);
-    ist->outputs[ist->nb_outputs - 1] = ost;
-}
-
-void ist_filter_add(InputStream *ist, InputFilter *ifilter, int is_simple)
+int ist_output_add(InputStream *ist, OutputStream *ost)
 {
     int ret;
 
-    ist_use(ist, is_simple ? DECODING_FOR_OST : DECODING_FOR_FILTER);
+    ret = ist_use(ist, ost->enc ? DECODING_FOR_OST : 0);
+    if (ret < 0)
+        return ret;
+
+    GROW_ARRAY(ist->outputs, ist->nb_outputs);
+    ist->outputs[ist->nb_outputs - 1] = ost;
+
+    return 0;
+}
+
+int ist_filter_add(InputStream *ist, InputFilter *ifilter, int is_simple)
+{
+    int ret;
+
+    ret = ist_use(ist, is_simple ? DECODING_FOR_OST : DECODING_FOR_FILTER);
+    if (ret < 0)
+        return ret;
 
     GROW_ARRAY(ist->filters, ist->nb_filters);
     ist->filters[ist->nb_filters - 1] = ifilter;
@@ -870,7 +902,9 @@ void ist_filter_add(InputStream *ist, InputFilter *ifilter, int is_simple)
     // initialize fallback parameters for filtering
     ret = ifilter_parameters_from_dec(ifilter, ist->dec_ctx);
     if (ret < 0)
-        report_and_exit(ret);
+        return ret;
+
+    return 0;
 }
 
 static const AVCodec *choose_decoder(const OptionsContext *o, AVFormatContext *s, AVStream *st,
@@ -989,6 +1023,7 @@ static DemuxStream *demux_stream_alloc(Demuxer *d, AVStream *st)
 
     ds->ist.st         = st;
     ds->ist.file_index = f->index;
+    ds->ist.index      = st->index;
     ds->ist.class      = &input_stream_class;
 
     snprintf(ds->log_name, sizeof(ds->log_name), "%cist#%d:%d/%s",
@@ -1145,11 +1180,6 @@ static void add_input_streams(const OptionsContext *o, Demuxer *d)
             exit_program(1);
         }
 
-        ist->filter_in_rescale_delta_last = AV_NOPTS_VALUE;
-
-        ist->last_frame_pts = AV_NOPTS_VALUE;
-        ist->last_frame_tb  = (AVRational){ 1, 1 };
-
         ist->dec_ctx = avcodec_alloc_context3(ist->dec);
         if (!ist->dec_ctx)
             report_and_exit(AVERROR(ENOMEM));
@@ -1159,14 +1189,6 @@ static void add_input_streams(const OptionsContext *o, Demuxer *d)
             av_log(ist, AV_LOG_ERROR, "Error initializing the decoder context.\n");
             exit_program(1);
         }
-
-        ist->decoded_frame = av_frame_alloc();
-        if (!ist->decoded_frame)
-            report_and_exit(AVERROR(ENOMEM));
-
-        ist->pkt = av_packet_alloc();
-        if (!ist->pkt)
-            report_and_exit(AVERROR(ENOMEM));
 
         if (o->bitexact)
             ist->dec_ctx->flags |= AV_CODEC_FLAG_BITEXACT;
@@ -1510,6 +1532,7 @@ int ifile_open(const OptionsContext *o, const char *filename)
     d->loop = o->loop;
     d->duration = 0;
     d->time_base = (AVRational){ 1, 1 };
+    d->nb_streams_warn = ic->nb_streams;
 
     f->format_nots = !!(ic->iformat->flags & AVFMT_NOTIMESTAMPS);
 
@@ -1540,7 +1563,6 @@ int ifile_open(const OptionsContext *o, const char *filename)
 
     d->thread_queue_size = o->thread_queue_size;
 
-    /* update the current parameters so that they match the one of the input stream */
     add_input_streams(o, d);
 
     /* dump the file content */
