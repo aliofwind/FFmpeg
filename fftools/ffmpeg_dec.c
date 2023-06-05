@@ -321,13 +321,8 @@ static int video_frame_process(InputStream *ist, AVFrame *frame)
 
 static void sub2video_flush(InputStream *ist)
 {
-    int i;
-    int ret;
-
-    if (ist->sub2video.end_pts < INT64_MAX)
-        sub2video_update(ist, INT64_MAX, NULL);
-    for (i = 0; i < ist->nb_filters; i++) {
-        ret = av_buffersrc_add_frame(ist->filters[i]->filter, NULL);
+    for (int i = 0; i < ist->nb_filters; i++) {
+        int ret = ifilter_sub2video(ist->filters[i], NULL);
         if (ret != AVERROR_EOF && ret < 0)
             av_log(NULL, AV_LOG_WARNING, "Flush the frame error.\n");
     }
@@ -336,7 +331,6 @@ static void sub2video_flush(InputStream *ist)
 int process_subtitle(InputStream *ist, AVSubtitle *subtitle, int *got_output)
 {
     int ret = 0;
-    int free_sub = 1;
 
     if (ist->fix_sub_duration) {
         int end = 1;
@@ -361,18 +355,13 @@ int process_subtitle(InputStream *ist, AVSubtitle *subtitle, int *got_output)
     if (!*got_output)
         return ret;
 
-    if (ist->sub2video.frame) {
-        sub2video_update(ist, INT64_MIN, subtitle);
-    } else if (ist->nb_filters) {
-        if (!ist->sub2video.sub_queue)
-            ist->sub2video.sub_queue = av_fifo_alloc2(8, sizeof(AVSubtitle), AV_FIFO_FLAG_AUTO_GROW);
-        if (!ist->sub2video.sub_queue)
-            report_and_exit(AVERROR(ENOMEM));
-
-        ret = av_fifo_write(ist->sub2video.sub_queue, subtitle, 1);
-        if (ret < 0)
-            exit_program(1);
-        free_sub = 0;
+    for (int i = 0; i < ist->nb_filters; i++) {
+        ret = ifilter_sub2video(ist->filters[i], subtitle);
+        if (ret < 0) {
+            av_log(ist, AV_LOG_ERROR, "Error sending a subtitle for filtering: %s\n",
+                   av_err2str(ret));
+            goto out;
+        }
     }
 
     if (!subtitle->num_rects)
@@ -387,8 +376,7 @@ int process_subtitle(InputStream *ist, AVSubtitle *subtitle, int *got_output)
     }
 
 out:
-    if (free_sub)
-        avsubtitle_free(subtitle);
+    avsubtitle_free(subtitle);
     return ret;
 }
 

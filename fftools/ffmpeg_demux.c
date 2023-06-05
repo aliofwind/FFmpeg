@@ -817,7 +817,6 @@ static void ist_free(InputStream **pist)
 
     av_dict_free(&ist->decoder_opts);
     avsubtitle_free(&ist->prev_sub.subtitle);
-    av_frame_free(&ist->sub2video.frame);
     av_freep(&ist->filters);
     av_freep(&ist->outputs);
     av_freep(&ist->hwaccel_device);
@@ -1228,6 +1227,27 @@ static void add_input_streams(const OptionsContext *o, Demuxer *d)
                 av_log(ist, AV_LOG_FATAL, "Invalid canvas size: %s.\n", canvas_size);
                 exit_program(1);
             }
+
+            /* Compute the size of the canvas for the subtitles stream.
+               If the subtitles codecpar has set a size, use it. Otherwise use the
+               maximum dimensions of the video streams in the same file. */
+            ist->sub2video.w = ist->dec_ctx->width;
+            ist->sub2video.h = ist->dec_ctx->height;
+            if (!(ist->sub2video.w && ist->sub2video.h)) {
+                for (int j = 0; j < ic->nb_streams; j++) {
+                    AVCodecParameters *par1 = ic->streams[j]->codecpar;
+                    if (par1->codec_type == AVMEDIA_TYPE_VIDEO) {
+                        ist->sub2video.w = FFMAX(ist->sub2video.w, par1->width);
+                        ist->sub2video.h = FFMAX(ist->sub2video.h, par1->height);
+                    }
+                }
+            }
+
+            if (!(ist->sub2video.w && ist->sub2video.h)) {
+                ist->sub2video.w = FFMAX(ist->sub2video.w, 720);
+                ist->sub2video.h = FFMAX(ist->sub2video.h, 576);
+            }
+
             break;
         }
         case AVMEDIA_TYPE_ATTACHMENT:
