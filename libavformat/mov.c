@@ -2646,6 +2646,7 @@ static int mov_finalize_stsd_codec(MOVContext *c, AVIOContext *pb,
     case AV_CODEC_ID_VP9:
         sti->need_parsing = AVSTREAM_PARSE_FULL;
         break;
+    case AV_CODEC_ID_EVC:
     case AV_CODEC_ID_AV1:
         /* field_order detection of H264 requires parsing */
     case AV_CODEC_ID_H264:
@@ -7932,6 +7933,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('i','l','o','c'), mov_read_iloc },
 { MKTAG('p','c','m','C'), mov_read_pcmc }, /* PCM configuration box */
 { MKTAG('p','i','t','m'), mov_read_pitm },
+{ MKTAG('e','v','c','C'), mov_read_glbl },
 { 0, NULL }
 };
 
@@ -8111,6 +8113,8 @@ static int mov_probe(const AVProbeData *p)
             score  = FFMAX(score, AVPROBE_SCORE_MAX - 5);
             break;
         case MKTAG(0x82,0x82,0x7f,0x7d):
+            score  = FFMAX(score, AVPROBE_SCORE_EXTENSION - 5);
+            break;
         case MKTAG('s','k','i','p'):
         case MKTAG('u','u','i','d'):
         case MKTAG('p','r','f','l'):

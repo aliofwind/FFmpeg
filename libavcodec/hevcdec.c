@@ -723,7 +723,6 @@ static int hls_slice_header(HEVCContext *s)
                 if (ret < 0)
                     return ret;
 
-                sh->bits_used_for_short_term_rps = pos - get_bits_left(gb);
                 sh->short_term_rps = &sh->slice_rps;
             } else {
                 int numbits, rps_idx;
@@ -1961,13 +1960,13 @@ static void hls_prediction_unit(HEVCLocalContext *lc, int x0, int y0,
 
     if (current_mv.pred_flag & PF_L0) {
         ref0 = refPicList[0].ref[current_mv.ref_idx[0]];
-        if (!ref0)
+        if (!ref0 || !ref0->frame->data[0])
             return;
         hevc_await_progress(s, ref0, &current_mv.mv[0], y0, nPbH);
     }
     if (current_mv.pred_flag & PF_L1) {
         ref1 = refPicList[1].ref[current_mv.ref_idx[1]];
-        if (!ref1)
+        if (!ref1 || !ref1->frame->data[0])
             return;
         hevc_await_progress(s, ref1, &current_mv.mv[1], y0, nPbH);
     }

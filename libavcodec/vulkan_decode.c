@@ -660,7 +660,12 @@ static VkResult vulkan_setup_profile(AVCodecContext *avctx,
         dec_caps->pNext = h264_caps;
         usage->pNext = h264_profile;
         h264_profile->sType = VK_STRUCTURE_TYPE_VIDEO_DECODE_H264_PROFILE_INFO_KHR;
-        h264_profile->stdProfileIdc = cur_profile;
+
+        /* Vulkan transmits all the constrant_set flags, rather than wanting them
+         * merged in the profile IDC */
+        h264_profile->stdProfileIdc = cur_profile & ~(FF_PROFILE_H264_CONSTRAINED |
+                                                      FF_PROFILE_H264_INTRA);
+
         h264_profile->pictureLayout = avctx->field_order == AV_FIELD_UNKNOWN ||
                                       avctx->field_order == AV_FIELD_PROGRESSIVE ?
                                       VK_VIDEO_DECODE_H264_PICTURE_LAYOUT_PROGRESSIVE_KHR :
@@ -1105,8 +1110,9 @@ int ff_vk_decode_init(AVCodecContext *avctx)
     session_create.pVideoProfile = &prof->profile_list.pProfiles[0];
 
     /* Create decode exec context.
-     * 4 async contexts per thread seems like a good number. */
-    err = ff_vk_exec_pool_init(s, &qf_dec, &ctx->exec_pool, 4*avctx->thread_count,
+     * 2 async contexts per thread was experimentally determined to be optimal
+     * for a majority of streams. */
+    err = ff_vk_exec_pool_init(s, &qf_dec, &ctx->exec_pool, 2*avctx->thread_count,
                                nb_q, VK_QUERY_TYPE_RESULT_STATUS_ONLY_KHR, 0,
                                session_create.pVideoProfile);
     if (err < 0)

@@ -417,6 +417,7 @@ Muxers/Demuxers:
   dv.c                                  Roman Shaposhnik
   electronicarts.c                      Peter Ross
   epafdec.c                             Paul B Mahol
+  evc*                                  Samsung (Dawid Kozinski)
   ffm*                                  Baptiste Coudurier
   flic.c                                Mike Melanson
   flvdec.c                              Michael Niedermayer
@@ -432,6 +433,7 @@ Muxers/Demuxers:
   ipmovie.c                             Mike Melanson
   ircam*                                Paul B Mahol
   iss.c                                 Stefan Gehrer
+  jpegxl_anim_dec.c                     Leo Izen
   jpegxl_probe.*                        Leo Izen
   jvdec.c                               Peter Ross
   kvag.c                                Zane van Iperen

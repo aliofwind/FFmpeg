@@ -119,8 +119,6 @@ typedef struct BenchmarkTimeStamps {
 static BenchmarkTimeStamps get_benchmark_time_stamps(void);
 static int64_t getmaxrss(void);
 
-int64_t nb_frames_dup = 0;
-int64_t nb_frames_drop = 0;
 unsigned nb_output_dumped = 0;
 
 static BenchmarkTimeStamps current_time;
@@ -433,6 +431,17 @@ InputStream *ist_iter(InputStream *prev)
     return NULL;
 }
 
+FrameData *frame_data(AVFrame *frame)
+{
+    if (!frame->opaque_ref) {
+        frame->opaque_ref = av_buffer_allocz(sizeof(FrameData));
+        if (!frame->opaque_ref)
+            return NULL;
+    }
+
+    return (FrameData*)frame->opaque_ref->data;
+}
+
 void remove_avoptions(AVDictionary **a, AVDictionary *b)
 {
     const AVDictionaryEntry *t = NULL;
@@ -491,6 +500,7 @@ static void print_report(int is_last_report, int64_t timer_start, int64_t cur_ti
     int64_t pts = INT64_MIN + 1;
     static int64_t last_time = -1;
     static int first_report = 1;
+    uint64_t nb_frames_dup = 0, nb_frames_drop = 0;
     int hours, mins, secs, us;
     const char *hours_sign;
     int ret;
@@ -535,6 +545,9 @@ static void print_report(int is_last_report, int64_t timer_start, int64_t cur_ti
                        ost->file_index, ost->index, q);
             if (is_last_report)
                 av_bprintf(&buf, "L");
+
+            nb_frames_dup  = ost->nb_frames_dup;
+            nb_frames_drop = ost->nb_frames_drop;
 
             vid = 1;
         }
@@ -715,23 +728,44 @@ cleanup:
     return ret;
 }
 
-static int fix_sub_duration_heartbeat(InputStream *ist, int64_t signal_pts)
+static void subtitle_free(void *opaque, uint8_t *data)
 {
-    int ret = AVERROR_BUG;
-    int got_output = 1;
-    AVSubtitle *prev_subtitle = &ist->prev_sub.subtitle;
-    AVSubtitle subtitle;
+    AVSubtitle *sub = (AVSubtitle*)data;
+    avsubtitle_free(sub);
+    av_free(sub);
+}
 
-    if (!ist->fix_sub_duration || !prev_subtitle->num_rects ||
-        signal_pts <= prev_subtitle->pts)
-        return 0;
+int subtitle_wrap_frame(AVFrame *frame, AVSubtitle *subtitle, int copy)
+{
+    AVBufferRef *buf;
+    AVSubtitle *sub;
+    int ret;
 
-    if ((ret = copy_av_subtitle(&subtitle, prev_subtitle)) < 0)
-        return ret;
+    if (copy) {
+        sub = av_mallocz(sizeof(*sub));
+        ret = sub ? copy_av_subtitle(sub, subtitle) : AVERROR(ENOMEM);
+        if (ret < 0) {
+            av_freep(&sub);
+            return ret;
+        }
+    } else {
+        sub = av_memdup(subtitle, sizeof(*subtitle));
+        if (!sub)
+            return AVERROR(ENOMEM);
+        memset(subtitle, 0, sizeof(*subtitle));
+    }
 
-    subtitle.pts = signal_pts;
+    buf = av_buffer_create((uint8_t*)sub, sizeof(*sub),
+                           subtitle_free, NULL, 0);
+    if (!buf) {
+        avsubtitle_free(sub);
+        av_freep(&sub);
+        return AVERROR(ENOMEM);
+    }
 
-    return process_subtitle(ist, &subtitle, &got_output);
+    frame->buf[0] = buf;
+
+    return 0;
 }
 
 int trigger_fix_sub_duration_heartbeat(OutputStream *ost, const AVPacket *pkt)
@@ -1026,30 +1060,11 @@ static void decode_flush(InputFile *ifile)
 {
     for (int i = 0; i < ifile->nb_streams; i++) {
         InputStream *ist = ifile->streams[i];
-        int ret;
 
-        if (ist->discard)
+        if (ist->discard || !ist->decoding_needed)
             continue;
 
-        do {
-            ret = process_input_packet(ist, NULL, 1);
-        } while (ret > 0);
-
-        if (ist->decoding_needed) {
-            /* report last frame duration to the demuxer thread */
-            if (ist->par->codec_type == AVMEDIA_TYPE_AUDIO) {
-                LastFrameDuration dur;
-
-                dur.stream_idx = i;
-                dur.duration   = av_rescale_q(ist->nb_samples,
-                                              (AVRational){ 1, ist->dec_ctx->sample_rate},
-                                              ist->st->time_base);
-
-                av_thread_message_queue_send(ifile->audio_duration_queue, &dur, 0);
-            }
-
-            avcodec_flush_buffers(ist->dec_ctx);
-        }
+        dec_packet(ist, NULL, 1);
     }
 }
 
@@ -1099,7 +1114,7 @@ static int process_input(int file_index)
                 OutputStream *ost = ist->outputs[oidx];
                 OutputFile    *of = output_files[ost->file_index];
                 close_output_stream(ost);
-                of_output_packet(of, ost->pkt, ost, 1);
+                of_output_packet(of, ost, NULL);
             }
         }
 

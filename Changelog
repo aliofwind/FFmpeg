@@ -14,6 +14,12 @@ version <next>:
 - color_vulkan filter
 - bwdif_vulkan filter
 - nlmeans_vulkan filter
+- RivaTuner video decoder
+- xfade_vulkan filter
+- vMix video decoder
+- Essential Video Coding parser, muxer and demuxer
+- Essential Video Coding frame merge bsf
+- bwdif_cuda filter
 
 version 6.0:
 - Radiance HDR image support
