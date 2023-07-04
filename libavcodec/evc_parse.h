@@ -41,27 +41,27 @@
 // u(n)  - unsigned integer using n bits.
 //         When n is "v" in the syntax table, the number of bits varies in a manner dependent on the value of other syntax elements.
 typedef struct EVCParserSliceHeader {
-    int slice_pic_parameter_set_id;                                     // ue(v)
-    int single_tile_in_slice_flag;                                      // u(1)
-    int first_tile_id;                                                  // u(v)
-    int arbitrary_slice_flag;                                           // u(1)
-    int last_tile_id;                                                   // u(v)
-    int num_remaining_tiles_in_slice_minus1;                            // ue(v)
-    int delta_tile_id_minus1[EVC_MAX_TILE_ROWS * EVC_MAX_TILE_COLUMNS]; // ue(v)
+    uint8_t slice_pic_parameter_set_id;                                      // ue(v)
+    uint8_t single_tile_in_slice_flag;                                       // u(1)
+    uint8_t first_tile_id;                                                   // u(v)
+    uint8_t arbitrary_slice_flag;                                            // u(1)
+    uint8_t last_tile_id;                                                    // u(v)
+    uint32_t num_remaining_tiles_in_slice_minus1;                            // ue(v)
+    uint16_t delta_tile_id_minus1[EVC_MAX_TILE_ROWS * EVC_MAX_TILE_COLUMNS]; // ue(v)
 
-    int slice_type;                                                     // ue(v)
-    int no_output_of_prior_pics_flag;                                   // u(1)
-    int mmvd_group_enable_flag;                                         // u(1)
-    int slice_alf_enabled_flag;                                         // u(1)
+    uint8_t slice_type;                                                      // ue(v)
+    uint8_t no_output_of_prior_pics_flag;                                    // u(1)
+    uint8_t mmvd_group_enable_flag;                                          // u(1)
+    uint8_t slice_alf_enabled_flag;                                          // u(1)
 
-    int slice_alf_luma_aps_id;                                          // u(5)
-    int slice_alf_map_flag;                                             // u(1)
-    int slice_alf_chroma_idc;                                           // u(2)
-    int slice_alf_chroma_aps_id;                                        // u(5)
-    int slice_alf_chroma_map_flag;                                      // u(1)
-    int slice_alf_chroma2_aps_id;                                       // u(5)
-    int slice_alf_chroma2_map_flag;                                     // u(1)
-    int slice_pic_order_cnt_lsb;                                        // u(v)
+    uint8_t slice_alf_luma_aps_id;                                           // u(5)
+    uint8_t slice_alf_map_flag;                                              // u(1)
+    uint8_t slice_alf_chroma_idc;                                            // u(2)
+    uint8_t slice_alf_chroma_aps_id;                                         // u(5)
+    uint8_t slice_alf_chroma_map_flag;                                       // u(1)
+    uint8_t slice_alf_chroma2_aps_id;                                        // u(5)
+    uint8_t slice_alf_chroma2_map_flag;                                      // u(1)
+    uint16_t slice_pic_order_cnt_lsb;                                        // u(v)
 
     // @note
     // Currently the structure does not reflect the entire Slice Header RBSP layout.
@@ -81,25 +81,6 @@ typedef struct EVCParserPoc {
     int DocOffset;          // the decoding order count of the previous picture
 } EVCParserPoc;
 
-static inline int evc_get_nalu_type(const uint8_t *bits, int bits_size, void *logctx)
-{
-    int unit_type_plus1 = 0;
-
-    if (bits_size >= EVC_NALU_HEADER_SIZE) {
-        unsigned char *p = (unsigned char *)bits;
-        // forbidden_zero_bit
-        if ((p[0] & 0x80) != 0) {
-            av_log(logctx, AV_LOG_ERROR, "Invalid NAL unit header\n");
-            return -1;
-        }
-
-        // nal_unit_type
-        unit_type_plus1 = (p[0] >> 1) & 0x3F;
-    }
-
-    return unit_type_plus1 - 1;
-}
-
 static inline uint32_t evc_read_nal_unit_length(const uint8_t *bits, int bits_size, void *logctx)
 {
     uint32_t nalu_len = 0;
@@ -114,11 +95,8 @@ static inline uint32_t evc_read_nal_unit_length(const uint8_t *bits, int bits_si
     return nalu_len;
 }
 
-// nuh_temporal_id specifies a temporal identifier for the NAL unit
-int ff_evc_get_temporal_id(const uint8_t *bits, int bits_size, void *logctx);
-
-int ff_evc_parse_slice_header(EVCParserSliceHeader *sh, const EVCParamSets *ps,
-                              enum EVCNALUnitType nalu_type, const uint8_t *buf, int buf_size);
+int ff_evc_parse_slice_header(GetBitContext *gb, EVCParserSliceHeader *sh,
+                              const EVCParamSets *ps, enum EVCNALUnitType nalu_type);
 
 // POC (picture order count of the current picture) derivation
 // @see ISO/IEC 23094-1:2020(E) 8.3.1 Decoding process for picture order count

@@ -62,6 +62,7 @@ static int parse_nal_unit(AVCodecParserContext *s, AVCodecContext *avctx,
                           const uint8_t *buf, int buf_size)
 {
     EVCParserContext *ctx = s->priv_data;
+    GetBitContext gb;
     int nalu_type, tid;
     int ret;
 
@@ -70,33 +71,37 @@ static int parse_nal_unit(AVCodecParserContext *s, AVCodecContext *avctx,
         return AVERROR_INVALIDDATA;
     }
 
+    ret = init_get_bits8(&gb, buf, buf_size);
+    if (ret < 0)
+        return ret;
+
     // @see ISO_IEC_23094-1_2020, 7.4.2.2 NAL unit header semantic (Table 4 - NAL unit type codes and NAL unit type classes)
     // @see enum EVCNALUnitType in evc.h
-    nalu_type = evc_get_nalu_type(buf, buf_size, avctx);
+    if (get_bits1(&gb)) {// forbidden_zero_bit
+        av_log(avctx, AV_LOG_ERROR, "Invalid NAL unit header\n");
+        return AVERROR_INVALIDDATA;
+    }
+
+    nalu_type = get_bits(&gb, 6) - 1;
     if (nalu_type < EVC_NOIDR_NUT || nalu_type > EVC_UNSPEC_NUT62) {
         av_log(avctx, AV_LOG_ERROR, "Invalid NAL unit type: (%d)\n", nalu_type);
         return AVERROR_INVALIDDATA;
     }
 
-    tid = ff_evc_get_temporal_id(buf, buf_size, avctx);
-    if (tid < 0) {
-        av_log(avctx, AV_LOG_ERROR, "Invalid temporial id: (%d)\n", tid);
-        return AVERROR_INVALIDDATA;
-    }
-
-    buf += EVC_NALU_HEADER_SIZE;
-    buf_size -= EVC_NALU_HEADER_SIZE;
+    tid = get_bits(&gb, 3);
+    skip_bits(&gb, 5); // nuh_reserved_zero_5bits
+    skip_bits1(&gb);   // nuh_extension_flag
 
     switch (nalu_type) {
     case EVC_SPS_NUT:
-        ret = ff_evc_parse_sps(&ctx->ps, buf, buf_size);
+        ret = ff_evc_parse_sps(&gb, &ctx->ps);
         if (ret < 0) {
             av_log(avctx, AV_LOG_ERROR, "SPS parsing error\n");
             return ret;
         }
         break;
     case EVC_PPS_NUT:
-        ret = ff_evc_parse_pps(&ctx->ps, buf, buf_size);
+        ret = ff_evc_parse_pps(&gb, &ctx->ps);
         if (ret < 0) {
             av_log(avctx, AV_LOG_ERROR, "PPS parsing error\n");
             return ret;
@@ -109,7 +114,7 @@ static int parse_nal_unit(AVCodecParserContext *s, AVCodecContext *avctx,
         EVCParserSliceHeader sh;
         int bit_depth;
 
-        ret = ff_evc_parse_slice_header(&sh, &ctx->ps, nalu_type, buf, buf_size);
+        ret = ff_evc_parse_slice_header(&gb, &sh, &ctx->ps, nalu_type);
         if (ret < 0) {
             av_log(avctx, AV_LOG_ERROR, "Slice header parsing error\n");
             return ret;

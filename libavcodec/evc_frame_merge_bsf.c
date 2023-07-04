@@ -34,7 +34,7 @@ typedef struct AccessUnitBuffer {
 } AccessUnitBuffer;
 
 typedef struct EVCFMergeContext {
-    AVPacket *in;
+    AVPacket *in, *buffer_pkt;
     EVCParamSets ps;
     EVCParserPoc poc;
     AccessUnitBuffer au_buffer;
@@ -67,90 +67,70 @@ static void evc_frame_merge_flush(AVBSFContext *bsf)
 
     ff_evc_ps_free(&ctx->ps);
     av_packet_unref(ctx->in);
+    av_packet_unref(ctx->buffer_pkt);
     ctx->au_buffer.data_size = 0;
 }
 
-static int evc_frame_merge_filter(AVBSFContext *bsf, AVPacket *out)
+static int parse_nal_unit(AVBSFContext *bsf, const uint8_t *buf, int buf_size)
 {
     EVCFMergeContext *ctx = bsf->priv_data;
-    AVPacket *in = ctx->in;
-    uint8_t *buffer, *nalu = NULL;
+    GetBitContext gb;
     enum EVCNALUnitType nalu_type;
-    int tid, nalu_size = 0;
-    int au_end_found = 0;
-    int err;
+    int tid, err;
 
-    err = ff_bsf_get_packet_ref(bsf, in);
+    err = init_get_bits8(&gb, buf, buf_size);
     if (err < 0)
         return err;
 
-    nalu_size = evc_read_nal_unit_length(in->data, EVC_NALU_LENGTH_PREFIX_SIZE, bsf);
-    if (nalu_size <= 0) {
-        err = AVERROR_INVALIDDATA;
-        goto end;
-    }
-
-    nalu = in->data + EVC_NALU_LENGTH_PREFIX_SIZE;
-    nalu_size = in->size - EVC_NALU_LENGTH_PREFIX_SIZE;
-
-    // NAL unit parsing needed to determine if end of AU was found
-    if (nalu_size <= 0) {
-        av_log(bsf, AV_LOG_ERROR, "Invalid NAL unit size: (%d)\n", nalu_size);
-        err = AVERROR_INVALIDDATA;
-        goto end;
-    }
-
     // @see ISO_IEC_23094-1_2020, 7.4.2.2 NAL unit header semantic (Table 4 - NAL unit type codes and NAL unit type classes)
     // @see enum EVCNALUnitType in evc.h
-    nalu_type = evc_get_nalu_type(nalu, nalu_size, bsf);
+    if (get_bits1(&gb)) {// forbidden_zero_bit
+        av_log(bsf, AV_LOG_ERROR, "Invalid NAL unit header\n");
+        return AVERROR_INVALIDDATA;
+    }
+
+    nalu_type = get_bits(&gb, 6) - 1;
     if (nalu_type < EVC_NOIDR_NUT || nalu_type > EVC_UNSPEC_NUT62) {
         av_log(bsf, AV_LOG_ERROR, "Invalid NAL unit type: (%d)\n", nalu_type);
-        err = AVERROR_INVALIDDATA;
-        goto end;
+        return AVERROR_INVALIDDATA;
     }
 
-    tid = ff_evc_get_temporal_id(nalu, nalu_size, bsf);
-    if (tid < 0) {
-        av_log(bsf, AV_LOG_ERROR, "Invalid temporial id: (%d)\n", tid);
-        err = AVERROR_INVALIDDATA;
-        goto end;
-    }
-
-    nalu += EVC_NALU_HEADER_SIZE;
-    nalu_size -= EVC_NALU_HEADER_SIZE;
+    tid = get_bits(&gb, 3);
+    skip_bits(&gb, 5); // nuh_reserved_zero_5bits
+    skip_bits1(&gb);   // nuh_extension_flag
 
     switch (nalu_type) {
     case EVC_SPS_NUT:
-        err = ff_evc_parse_sps(&ctx->ps, nalu, nalu_size);
+        err = ff_evc_parse_sps(&gb, &ctx->ps);
         if (err < 0) {
             av_log(bsf, AV_LOG_ERROR, "SPS parsing error\n");
-            goto end;
+            return err;
         }
         break;
     case EVC_PPS_NUT:
-        err = ff_evc_parse_pps(&ctx->ps, nalu, nalu_size);
+        err = ff_evc_parse_pps(&gb, &ctx->ps);
         if (err < 0) {
             av_log(bsf, AV_LOG_ERROR, "PPS parsing error\n");
-            goto end;
+            return err;
         }
         break;
     case EVC_IDR_NUT:   // Coded slice of a IDR or non-IDR picture
     case EVC_NOIDR_NUT: {
         EVCParserSliceHeader sh;
 
-        err = ff_evc_parse_slice_header(&sh, &ctx->ps, nalu_type, nalu, nalu_size);
+        err = ff_evc_parse_slice_header(&gb, &sh, &ctx->ps, nalu_type);
         if (err < 0) {
             av_log(bsf, AV_LOG_ERROR, "Slice header parsing error\n");
-            goto end;
+            return err;
         }
 
         // POC (picture order count of the current picture) derivation
         // @see ISO/IEC 23094-1:2020(E) 8.3.1 Decoding process for picture order count
         err = ff_evc_derive_poc(&ctx->ps, &sh, &ctx->poc, nalu_type, tid);
         if (err < 0)
-            goto end;
+            return err;
 
-        au_end_found = end_of_access_unit_found(&ctx->ps, &sh, &ctx->poc, nalu_type);
+        return end_of_access_unit_found(&ctx->ps, &sh, &ctx->poc, nalu_type);
 
         break;
     }
@@ -161,39 +141,112 @@ static int evc_frame_merge_filter(AVBSFContext *bsf, AVPacket *out)
         break;
     }
 
-    buffer = av_fast_realloc(ctx->au_buffer.data, &ctx->au_buffer.capacity,
-                             ctx->au_buffer.data_size + in->size);
-    if (!buffer) {
-        av_freep(&ctx->au_buffer.data);
-        err = AVERROR_INVALIDDATA;
-        goto end;
+    return 0;
+}
+
+static int evc_frame_merge_filter(AVBSFContext *bsf, AVPacket *out)
+{
+    EVCFMergeContext *ctx = bsf->priv_data;
+    AVPacket *in = ctx->in, *buffer_pkt = ctx->buffer_pkt;
+    size_t data_size;
+    int au_end_found = 0, err;
+
+    while (!au_end_found) {
+        uint8_t *buffer;
+        uint32_t nalu_size;
+
+        if (!in->size) {
+            av_packet_unref(in);
+            err = ff_bsf_get_packet_ref(bsf, in);
+            if (err < 0) {
+                if (err == AVERROR_EOF && ctx->au_buffer.data_size > 0)
+                    break;
+                return err;
+            }
+            /* Buffer packets with timestamps (there should be at most one per AU)
+             * or any packet if buffer_pkt is empty. The latter is needed to
+             * passthrough positions in case there are no timestamps like with
+             * the raw EVC demuxer. */
+            if (!buffer_pkt->data ||
+                in->pts != AV_NOPTS_VALUE && buffer_pkt->pts == AV_NOPTS_VALUE) {
+                err = av_packet_ref(buffer_pkt, in);
+                if (err < 0)
+                    goto end;
+            }
+        }
+
+        // Buffer size is not enough for buffer to store NAL unit 4-bytes prefix (length)
+        if (in->size < EVC_NALU_LENGTH_PREFIX_SIZE)
+            return AVERROR_INVALIDDATA;
+
+        nalu_size = evc_read_nal_unit_length(in->data, EVC_NALU_LENGTH_PREFIX_SIZE, bsf);
+        if (!nalu_size || nalu_size > INT_MAX) {
+            av_log(bsf, AV_LOG_ERROR, "Invalid NAL unit size: (%u)\n", nalu_size);
+            err = AVERROR_INVALIDDATA;
+            goto end;
+        }
+
+        if (in->size < nalu_size + EVC_NALU_LENGTH_PREFIX_SIZE) {
+            err = AVERROR_INVALIDDATA;
+            goto end;
+        }
+
+        err = parse_nal_unit(bsf, in->data + EVC_NALU_LENGTH_PREFIX_SIZE, nalu_size);
+        if (err < 0) {
+            av_log(bsf, AV_LOG_ERROR, "Parsing of NAL unit failed\n");
+            goto end;
+        }
+        au_end_found = err;
+
+        nalu_size += EVC_NALU_LENGTH_PREFIX_SIZE;
+
+        data_size = ctx->au_buffer.data_size + nalu_size;
+        if (data_size > INT_MAX - AV_INPUT_BUFFER_PADDING_SIZE) {
+            av_log(bsf, AV_LOG_ERROR, "Assembled packet is too big\n");
+            err = AVERROR(ERANGE);
+            goto end;
+        }
+
+        buffer = av_fast_realloc(ctx->au_buffer.data, &ctx->au_buffer.capacity,
+                                 data_size);
+        if (!buffer) {
+            av_freep(&ctx->au_buffer.data);
+            err = AVERROR_INVALIDDATA;
+            goto end;
+        }
+
+        ctx->au_buffer.data = buffer;
+        memcpy(ctx->au_buffer.data + ctx->au_buffer.data_size, in->data, nalu_size);
+
+        ctx->au_buffer.data_size = data_size;
+
+        in->data += nalu_size;
+        in->size -= nalu_size;
     }
 
-    ctx->au_buffer.data = buffer;
-    memcpy(ctx->au_buffer.data + ctx->au_buffer.data_size, in->data, in->size);
-
-    ctx->au_buffer.data_size += in->size;
-
     av_packet_unref(in);
+    data_size = ctx->au_buffer.data_size;
 
-    if (au_end_found) {
-        size_t data_size = ctx->au_buffer.data_size;
-
-        ctx->au_buffer.data_size = 0;
-        err = av_new_packet(out, data_size);
-        if (err < 0)
-            return err;
-
-        memcpy(out->data, ctx->au_buffer.data, data_size);
-    } else
-        err = AVERROR(EAGAIN);
-
-    if (err < 0 && err != AVERROR(EAGAIN))
-        ctx->au_buffer.data_size = 0;
-
-end:
+    ctx->au_buffer.data_size = 0;
+    // drop the data in buffer_pkt, if any, but keep the props
+    av_buffer_unref(&buffer_pkt->buf);
+    err = av_buffer_realloc(&buffer_pkt->buf, data_size + AV_INPUT_BUFFER_PADDING_SIZE);
     if (err < 0)
+        goto end;
+
+    buffer_pkt->data = buffer_pkt->buf->data;
+    buffer_pkt->size = data_size;
+    av_packet_move_ref(out, buffer_pkt);
+    memcpy(out->data, ctx->au_buffer.data, data_size);
+    memset(out->data + data_size, 0, AV_INPUT_BUFFER_PADDING_SIZE);
+
+    err = 0;
+end:
+    if (err < 0) {
         av_packet_unref(in);
+        av_packet_unref(buffer_pkt);
+        ctx->au_buffer.data_size = 0;
+    }
     return err;
 }
 
@@ -202,7 +255,8 @@ static int evc_frame_merge_init(AVBSFContext *bsf)
     EVCFMergeContext *ctx = bsf->priv_data;
 
     ctx->in  = av_packet_alloc();
-    if (!ctx->in)
+    ctx->buffer_pkt = av_packet_alloc();
+    if (!ctx->in || !ctx->buffer_pkt)
         return AVERROR(ENOMEM);
 
     return 0;
@@ -213,6 +267,7 @@ static void evc_frame_merge_close(AVBSFContext *bsf)
     EVCFMergeContext *ctx = bsf->priv_data;
 
     av_packet_free(&ctx->in);
+    av_packet_free(&ctx->buffer_pkt);
     ff_evc_ps_free(&ctx->ps);
 
     ctx->au_buffer.capacity = 0;

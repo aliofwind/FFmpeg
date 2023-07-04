@@ -338,6 +338,9 @@ fate-vsynth%-msmpeg4:            ENCOPTS = -qscale 10
 FATE_VCODEC-$(call ENCDEC, MSMPEG4V2, AVI) += msmpeg4v2
 fate-vsynth%-msmpeg4v2:          ENCOPTS = -qscale 10
 
+FATE_VCODEC_SCALE-$(call ENCDEC, MSRLE, AVI) += msrle
+fate-vsynth%-msrle:              CODEC   = msrle
+
 FATE_VCODEC_SCALE-$(call ENCDEC, PNG, AVI) += mpng
 fate-vsynth%-mpng:               CODEC   = png
 
@@ -400,6 +403,10 @@ fate-vsynth%-rv10:               FMT     = rm
 FATE_VCODEC-$(call ENCDEC, RV20, RM)    += rv20
 fate-vsynth%-rv20:               ENCOPTS = -qscale 10
 fate-vsynth%-rv20:               FMT     = rm
+
+FATE_VCODEC_SCALE-$(call ENCDEC, SMC, MOV) += smc
+fate-vsynth%-smc:                CODEC   = smc
+fate-vsynth%-smc:                FMT     = mov
 
 FATE_VCODEC_SCALE-$(call ENCDEC, SNOW, AVI) += snow snow-hpel
 fate-vsynth%-snow:               ENCOPTS = -qscale 2 -flags +qpel \
