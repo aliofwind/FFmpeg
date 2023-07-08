@@ -61,7 +61,7 @@ static int FUNC(general_constraints_info) (CodedBitstreamContext *ctx,
                                            RWContext *rw,
                                            H266GeneralConstraintsInfo *current)
 {
-    int err, i;
+    int err, i, num_additional_bits_used;
 
     flag(gci_present_flag);
     if (current->gci_present_flag) {
@@ -148,10 +148,27 @@ static int FUNC(general_constraints_info) (CodedBitstreamContext *ctx,
         flag(gci_no_lmcs_constraint_flag);
         flag(gci_no_ladf_constraint_flag);
         flag(gci_no_virtual_boundaries_constraint_flag);
-        ub(8, gci_num_reserved_bits);
-        for (i = 0; i < current->gci_num_reserved_bits; i++) {
-            flags(gci_reserved_zero_bit[i], 1, i);
+        ub(8, gci_num_additional_bits);
+        if (current->gci_num_additional_bits > 5) {
+            flag(gci_all_rap_pictures_constraint_flag);
+            flag(gci_no_extended_precision_processing_constraint_flag);
+            flag(gci_no_ts_residual_coding_rice_constraint_flag);
+            flag(gci_no_rrc_rice_extension_constraint_flag);
+            flag(gci_no_persistent_rice_adaptation_constraint_flag);
+            flag(gci_no_reverse_last_sig_coeff_constraint_flag);
+            num_additional_bits_used = 6;
+        } else {
+            infer(gci_all_rap_pictures_constraint_flag, 0);
+            infer(gci_no_extended_precision_processing_constraint_flag, 0);
+            infer(gci_no_ts_residual_coding_rice_constraint_flag, 0);
+            infer(gci_no_rrc_rice_extension_constraint_flag, 0);
+            infer(gci_no_persistent_rice_adaptation_constraint_flag, 0);
+            infer(gci_no_reverse_last_sig_coeff_constraint_flag, 0);
+            num_additional_bits_used = 0;
         }
+
+        for (i = 0; i < current->gci_num_additional_bits - num_additional_bits_used; i++)
+            flags(gci_reserved_bit[i], 1, i);
     }
     while (byte_alignment(rw) != 0)
         fixed(1, gci_alignment_zero_bit, 0);
@@ -623,6 +640,57 @@ static int FUNC(ols_timing_hrd_parameters) (CodedBitstreamContext *ctx,
     return 0;
 }
 
+static int FUNC(opi)(CodedBitstreamContext *ctx, RWContext *rw,
+                     H266RawOPI *current)
+{
+    int err;
+
+    HEADER("Operating point information");
+
+    CHECK(FUNC(nal_unit_header)(ctx, rw,
+                                &current->nal_unit_header, VVC_OPI_NUT));
+
+    flag(opi_ols_info_present_flag);
+    flag(opi_htid_info_present_flag);
+
+    if(current->opi_ols_info_present_flag)
+        ue(opi_ols_idx, 0, VVC_MAX_TOTAL_NUM_OLSS - 1);
+
+    if(current->opi_htid_info_present_flag)
+        ub(3, opi_htid_plus1);
+
+    flag(opi_extension_flag);
+    if (current->opi_extension_flag)
+        CHECK(FUNC(extension_data) (ctx, rw, &current->extension_data));
+    CHECK(FUNC(rbsp_trailing_bits) (ctx, rw));
+
+    return 0;
+}
+
+static int FUNC(dci)(CodedBitstreamContext *ctx, RWContext *rw,
+                     H266RawDCI *current)
+{
+    int err, i;
+
+    HEADER("Decoding capability information");
+
+    CHECK(FUNC(nal_unit_header)(ctx, rw,
+                                &current->nal_unit_header, VVC_DCI_NUT));
+
+    ub(4, dci_reserved_zero_4bits);
+    ub(4, dci_num_ptls_minus1);
+    for (i = 0; i <= current->dci_num_ptls_minus1; i++)
+        CHECK(FUNC(profile_tier_level)(ctx, rw,
+                                       current->dci_profile_tier_level + i, 1, 0));
+
+    flag(dci_extension_flag);
+    if (current->dci_extension_flag)
+        CHECK(FUNC(extension_data)(ctx, rw, &current->extension_data));
+    CHECK(FUNC(rbsp_trailing_bits)(ctx, rw));
+
+    return 0;
+}
+
 static int FUNC(vps) (CodedBitstreamContext *ctx, RWContext *rw,
                      H266RawVPS *current)
 {
@@ -902,7 +970,7 @@ static int FUNC(vps) (CodedBitstreamContext *ctx, RWContext *rw,
             ues(vps_ols_dpb_pic_width[i], 0, UINT16_MAX, 1, i);
             ues(vps_ols_dpb_pic_height[i], 0, UINT16_MAX, 1, i);
             ubs(2, vps_ols_dpb_chroma_format[i], 1, i);
-            ues(vps_ols_dpb_bitdepth_minus8[i], 0, 2, 1, i);
+            ues(vps_ols_dpb_bitdepth_minus8[i], 0, 8, 1, i);
             if (vps_num_dpb_params > 1
                 && vps_num_dpb_params != num_multi_layer_olss)
                 ues(vps_ols_dpb_params_idx[i], 0, vps_num_dpb_params - 1, 1, i);
@@ -963,6 +1031,22 @@ static int FUNC(vps) (CodedBitstreamContext *ctx, RWContext *rw,
     return 0;
 }
 
+static int FUNC(sps_range_extension)(CodedBitstreamContext *ctx, RWContext *rw,
+                                     H266RawSPS *current)
+{
+    int err;
+
+    flag(sps_extended_precision_flag);
+    if (current->sps_transform_skip_enabled_flag)
+        flag(sps_ts_residual_coding_rice_present_in_sh_flag);
+    else
+        infer(sps_ts_residual_coding_rice_present_in_sh_flag, 0);
+    flag(sps_rrc_rice_extension_flag);
+    flag(sps_persistent_rice_adaptation_enabled_flag);
+    flag(sps_reverse_last_sig_coeff_enabled_flag);
+
+    return 0;
+}
 
 static int FUNC(sps)(CodedBitstreamContext *ctx, RWContext *rw,
                      H266RawSPS *current)
@@ -1158,7 +1242,7 @@ static int FUNC(sps)(CodedBitstreamContext *ctx, RWContext *rw,
     }
 
 
-    ue(sps_bitdepth_minus8, 0, 2);
+    ue(sps_bitdepth_minus8, 0, 8);
     qp_bd_offset = 6 * current->sps_bitdepth_minus8;
 
     flag(sps_entropy_coding_sync_enabled_flag);
@@ -1518,9 +1602,33 @@ static int FUNC(sps)(CodedBitstreamContext *ctx, RWContext *rw,
     } else {
         CHECK(FUNC(vui_parameters_default) (ctx, rw, &current->vui));
     }
+
     flag(sps_extension_flag);
-    if (current->sps_extension_flag)
-        CHECK(FUNC(extension_data) (ctx, rw, &current->extension_data));
+    if (current->sps_extension_flag) {
+        flag(sps_range_extension_flag);
+        ub(7, sps_extension_7bits);
+
+        if (current->sps_range_extension_flag) {
+            CHECK(FUNC(sps_range_extension)(ctx, rw, current));
+        } else {
+            infer(sps_extended_precision_flag, 0);
+            infer(sps_ts_residual_coding_rice_present_in_sh_flag, 0);
+            infer(sps_rrc_rice_extension_flag, 0);
+            infer(sps_persistent_rice_adaptation_enabled_flag, 0);
+            infer(sps_reverse_last_sig_coeff_enabled_flag, 0);
+        }
+    } else {
+        infer(sps_range_extension_flag, 0);
+        infer(sps_extension_7bits, 0);
+        infer(sps_extended_precision_flag, 0);
+        infer(sps_ts_residual_coding_rice_present_in_sh_flag, 0);
+        infer(sps_rrc_rice_extension_flag, 0);
+        infer(sps_persistent_rice_adaptation_enabled_flag, 0);
+        infer(sps_reverse_last_sig_coeff_enabled_flag, 0);
+    }
+
+    if (current->sps_extension_7bits)
+        CHECK(FUNC(extension_data)(ctx, rw, &current->extension_data));
 
     CHECK(FUNC(rbsp_trailing_bits) (ctx, rw));
 
@@ -1737,7 +1845,7 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
         }
         for (i = 0; i <= current->pps_num_exp_tile_rows_minus1; i++) {
             ues(pps_tile_row_height_minus1[i],
-                0, pic_height_in_ctbs_y - 1, 1, i);
+                0, pic_height_in_ctbs_y - exp_tile_height - 1, 1, i);
             exp_tile_height += current->pps_tile_row_height_minus1[i] + 1;
         }
 
@@ -1748,10 +1856,10 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
                      "Tile column width(%d) exceeds picture width\n",i);
               return AVERROR_INVALIDDATA;
           }
+          current->col_width_val[i] = current->pps_tile_column_width_minus1[i] + 1;
           remaining_size -= (current->pps_tile_column_width_minus1[i] + 1);
         }
-        unified_size = (i == 0 ? pic_width_in_ctbs_y :
-                        (current->pps_tile_column_width_minus1[i - 1] + 1));
+        unified_size = current->pps_tile_column_width_minus1[i - 1] + 1;
         while (remaining_size > 0) {
             if (current->num_tile_columns > VVC_MAX_TILE_COLUMNS) {
                 av_log(ctx->log_ctx, AV_LOG_ERROR,
@@ -1760,7 +1868,7 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
                 return AVERROR_INVALIDDATA;
             }
             unified_size = FFMIN(remaining_size, unified_size);
-            current->pps_tile_column_width_minus1[i] = unified_size - 1;
+            current->col_width_val[i] = unified_size;
             remaining_size -= unified_size;
             i++;
         }
@@ -1779,14 +1887,14 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
                      "Tile row height(%d) exceeds picture height\n",i);
               return AVERROR_INVALIDDATA;
           }
+          current->row_height_val[i] = current->pps_tile_row_height_minus1[i] + 1;
           remaining_size -= (current->pps_tile_row_height_minus1[i] + 1);
         }
-        unified_size = (i == 0 ? pic_height_in_ctbs_y :
-                        (current->pps_tile_row_height_minus1[i - 1] + 1));
+        unified_size = current->pps_tile_row_height_minus1[i - 1] + 1;
 
         while (remaining_size > 0) {
             unified_size = FFMIN(remaining_size, unified_size);
-            current->pps_tile_row_height_minus1[i] = unified_size - 1;
+            current->row_height_val[i] = unified_size;
             remaining_size -= unified_size;
             i++;
         }
@@ -1852,20 +1960,20 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
 
                 ctu_x = ctu_y = 0;
                 for (j = 0; j < tile_x; j++) {
-                    ctu_x += current->pps_tile_column_width_minus1[j] + 1;
+                    ctu_x += current->col_width_val[j];
                 }
                 for (j = 0; j < tile_y; j++) {
-                    ctu_y += current->pps_tile_row_height_minus1[j] + 1;
+                    ctu_y += current->row_height_val[j];
                 }
                 if (current->pps_slice_width_in_tiles_minus1[i] == 0 &&
                     current->pps_slice_height_in_tiles_minus1[i] == 0 &&
-                    current->pps_tile_row_height_minus1[tile_y] > 0) {
+                    current->row_height_val[tile_y] > 1) {
                     int num_slices_in_tile,
                         uniform_slice_height, remaining_height_in_ctbs_y;
                     remaining_height_in_ctbs_y =
-                        current->pps_tile_row_height_minus1[tile_y] + 1;
+                        current->row_height_val[tile_y];
                     ues(pps_num_exp_slices_in_tile[i],
-                        0, current->pps_tile_row_height_minus1[tile_y], 1, i);
+                        0, current->row_height_val[tile_y] - 1, 1, i);
                     if (current->pps_num_exp_slices_in_tile[i] == 0) {
                         num_slices_in_tile = 1;
                         slice_top_left_ctu_x[i] = ctu_x;
@@ -1875,7 +1983,7 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
                         for (j = 0; j < current->pps_num_exp_slices_in_tile[i];
                              j++) {
                             ues(pps_exp_slice_height_in_ctus_minus1[i][j], 0,
-                                current->pps_tile_row_height_minus1[tile_y], 2,
+                                current->row_height_val[tile_y] - 1, 2,
                                 i, j);
                             slice_height_in_ctus =
                                 current->
@@ -1890,7 +1998,7 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
                             remaining_height_in_ctbs_y -= slice_height_in_ctus;
                         }
                         uniform_slice_height = 1 +
-                            (j == 0 ? current->pps_tile_row_height_minus1[tile_y] :
+                            (j == 0 ? current->row_height_val[tile_y] - 1:
                             current->pps_exp_slice_height_in_ctus_minus1[i][j-1]);
                         while (remaining_height_in_ctbs_y > uniform_slice_height) {
                             current->slice_height_in_ctus[i + j] =
@@ -1919,7 +2027,7 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
                          j <= current->pps_slice_height_in_tiles_minus1[i];
                          j++) {
                         height +=
-                           current->pps_tile_row_height_minus1[tile_y + j] + 1;
+                           current->row_height_val[tile_y + j];
                     }
                     current->slice_height_in_ctus[i] = height;
 
@@ -1956,10 +2064,10 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
 
                 ctu_x = 0, ctu_y = 0;
                 for (j = 0; j < tile_x; j++) {
-                    ctu_x += current->pps_tile_column_width_minus1[j] + 1;
+                    ctu_x += current->col_width_val[j];
                 }
                 for (j = 0; j < tile_y; j++) {
-                    ctu_y += current->pps_tile_row_height_minus1[j] + 1;
+                    ctu_y += current->row_height_val[j];
                 }
                 slice_top_left_ctu_x[i] = ctu_x;
                 slice_top_left_ctu_y[i] = ctu_y;
@@ -1972,7 +2080,7 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
                 for (j = 0; j <= current->pps_slice_height_in_tiles_minus1[i];
                      j++) {
                     height +=
-                        current->pps_tile_row_height_minus1[tile_y + j] + 1;
+                        current->row_height_val[tile_y + j];
                 }
                 current->slice_height_in_ctus[i] = height;
 
@@ -2015,9 +2123,11 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
         infer(pps_tile_column_width_minus1[0], pic_width_in_ctbs_y - 1);
         infer(pps_num_exp_tile_rows_minus1, 0);
         infer(pps_tile_row_height_minus1[0], pic_height_in_ctbs_y - 1);
-        infer(num_tile_columns, 1);
-        infer(num_tile_rows, 1);
-        infer(num_tiles_in_pic, 1);
+        current->col_width_val[0] = pic_width_in_ctbs_y;
+        current->row_height_val[0] = pic_height_in_ctbs_y;
+        current->num_tile_columns = 1;
+        current->num_tile_rows = 1;
+        current->num_tiles_in_pic = 1;
     }
 
     flag(pps_cabac_init_present_flag);
@@ -2129,6 +2239,237 @@ static int FUNC(pps) (CodedBitstreamContext *ctx, RWContext *rw,
         CHECK(FUNC(extension_data) (ctx, rw, &current->extension_data));
 
     CHECK(FUNC(rbsp_trailing_bits) (ctx, rw));
+    return 0;
+}
+
+static int FUNC(alf_data)(CodedBitstreamContext *ctx, RWContext *rw,
+                          H266RawAPS *current)
+{
+    int err, j, k;
+
+    flag(alf_luma_filter_signal_flag);
+
+    if (current->aps_chroma_present_flag) {
+        flag(alf_chroma_filter_signal_flag);
+        flag(alf_cc_cb_filter_signal_flag);
+        flag(alf_cc_cr_filter_signal_flag);
+    } else {
+        infer(alf_chroma_filter_signal_flag, 0);
+        infer(alf_cc_cb_filter_signal_flag, 0);
+        infer(alf_cc_cr_filter_signal_flag, 0);
+    }
+
+    if (current->alf_luma_filter_signal_flag) {
+        flag(alf_luma_clip_flag);
+        ue(alf_luma_num_filters_signalled_minus1, 0, VVC_NUM_ALF_FILTERS - 1);
+        if (current->alf_luma_num_filters_signalled_minus1 > 0) {
+            unsigned int bits = av_ceil_log2(current->alf_luma_num_filters_signalled_minus1 + 1);
+            for (int filt_idx = 0; filt_idx < VVC_NUM_ALF_FILTERS; filt_idx++)
+                us(bits, alf_luma_coeff_delta_idx[filt_idx],
+                   0, current->alf_luma_num_filters_signalled_minus1,
+                   1, filt_idx);
+        }
+        for (int sf_idx = 0; sf_idx <= current->alf_luma_num_filters_signalled_minus1; sf_idx++)
+            for (j = 0; j < 12; j++) {
+                ues(alf_luma_coeff_abs[sf_idx][j], 0, 128, 2, sf_idx, j);
+                if (current->alf_luma_coeff_abs[sf_idx][j])
+                    ubs(1, alf_luma_coeff_sign[sf_idx][j], 2, sf_idx, j);
+                else
+                    infer(alf_luma_coeff_sign[sf_idx][j], 0);
+            }
+    } else {
+        infer(alf_luma_clip_flag, 0);
+        infer(alf_luma_num_filters_signalled_minus1, 0);
+    }
+    for (int sf_idx = 0; sf_idx <= current->alf_luma_num_filters_signalled_minus1; sf_idx++) {
+        for (j = 0; j < 12; j++) {
+            if (current->alf_luma_clip_flag)
+                ubs(2, alf_luma_clip_idx[sf_idx][j], 2, sf_idx, j);
+            else
+                infer(alf_luma_clip_idx[sf_idx][j], 0);
+        }
+    }
+
+    if (current->alf_chroma_filter_signal_flag) {
+        flag(alf_chroma_clip_flag);
+        ue(alf_chroma_num_alt_filters_minus1, 0, 7);
+    } else {
+        infer(alf_chroma_clip_flag, 0);
+        infer(alf_chroma_num_alt_filters_minus1, 0);
+    }
+    for (int alt_idx = 0; alt_idx <= current->alf_chroma_num_alt_filters_minus1; alt_idx++) {
+        for (j = 0; j < 6; j++) {
+            if (current->alf_chroma_filter_signal_flag)
+                ues(alf_chroma_coeff_abs[alt_idx][j], 0, 128, 2, alt_idx, j);
+            else
+                infer(alf_chroma_coeff_abs[alt_idx][j], 0);
+            if (current->alf_chroma_coeff_abs[alt_idx][j] > 0)
+                ubs(1, alf_chroma_coeff_sign[alt_idx][j], 2, alt_idx, j);
+            else
+                infer(alf_chroma_coeff_sign[alt_idx][j], 0);
+        }
+        for (j = 0; j < 6; j++) {
+            if (current->alf_chroma_clip_flag)
+                ubs(2, alf_chroma_clip_idx[alt_idx][j], 2, alt_idx, j);
+            else
+                infer(alf_chroma_clip_idx[alt_idx][j], 0);
+        }
+    }
+
+    if (current->alf_cc_cb_filter_signal_flag)
+        ue(alf_cc_cb_filters_signalled_minus1, 0, 3);
+    else
+        infer(alf_cc_cb_filters_signalled_minus1, 0);
+    for (k = 0; k <= current->alf_cc_cb_filters_signalled_minus1; k++) {
+        for (j = 0; j < 7; j++) {
+            if (current->alf_cc_cb_filter_signal_flag)
+                ubs(3, alf_cc_cb_mapped_coeff_abs[k][j], 2, k, j);
+            else
+                infer(alf_cc_cb_mapped_coeff_abs[k][j], 0);
+            if (current->alf_cc_cb_mapped_coeff_abs[k][j])
+                ubs(1, alf_cc_cb_coeff_sign[k][j], 2, k, j);
+            else
+                infer(alf_cc_cb_coeff_sign[k][j], 0);
+        }
+    }
+
+    if (current->alf_cc_cr_filter_signal_flag)
+        ue(alf_cc_cr_filters_signalled_minus1, 0, 3);
+    else
+        infer(alf_cc_cr_filters_signalled_minus1, 0);
+    for (k = 0; k < current->alf_cc_cr_filters_signalled_minus1 + 1; k++) {
+        for (j = 0; j < 7; j++) {
+            if (current->alf_cc_cr_filter_signal_flag)
+                ubs(3, alf_cc_cr_mapped_coeff_abs[k][j], 2, k, j);
+            else
+                infer(alf_cc_cr_mapped_coeff_abs[k][j], 0);
+            if (current->alf_cc_cr_mapped_coeff_abs[k][j])
+                ubs(1, alf_cc_cr_coeff_sign[k][j], 2, k, j);
+            else
+                infer(alf_cc_cr_coeff_sign[k][j], 0);
+        }
+    }
+
+    return 0;
+}
+
+static int FUNC(lmcs_data)(CodedBitstreamContext *ctx, RWContext *rw,
+                           H266RawAPS *current)
+{
+    int err, i, lmcs_max_bin_idx;
+
+    ue(lmcs_min_bin_idx, 0, 15);
+    ue(lmcs_delta_max_bin_idx, 0, 15);
+    ue(lmcs_delta_cw_prec_minus1, 0, 14);
+
+    lmcs_max_bin_idx = 15 - current->lmcs_delta_max_bin_idx;
+
+    if (lmcs_max_bin_idx < current->lmcs_min_bin_idx)
+        return AVERROR_INVALIDDATA;
+
+    for (i = current->lmcs_min_bin_idx; i <= lmcs_max_bin_idx; i++) {
+        ubs(current->lmcs_delta_cw_prec_minus1 + 1, lmcs_delta_abs_cw[i], 1, i);
+        if (current->lmcs_delta_abs_cw[i] > 0)
+            flags(lmcs_delta_sign_cw_flag[i], 1, i);
+        else
+            infer(lmcs_delta_sign_cw_flag[i], 0);
+    }
+
+    if (current->aps_chroma_present_flag) {
+        ub(3, lmcs_delta_abs_crs);
+        if (current->lmcs_delta_abs_crs > 0)
+            flag(lmcs_delta_sign_crs_flag);
+        else
+            infer(lmcs_delta_sign_crs_flag, 0);
+    } else {
+        infer(lmcs_delta_abs_crs, 0);
+        infer(lmcs_delta_sign_crs_flag, 0);
+    }
+
+    return 0;
+}
+
+static int FUNC(scaling_list_data)(CodedBitstreamContext *ctx, RWContext *rw,
+                                   H266RawAPS *current)
+{
+    // 7.4.3.4, deriving DiagScanOrder
+    static const uint8_t diag_scan_order[64][2] = {
+        { 0,  0, }, { 0,  1, }, { 1,  0, }, { 0,  2, }, { 1,  1, }, { 2,  0, }, { 0,  3, }, { 1,  2, },
+        { 2,  1, }, { 3,  0, }, { 0,  4, }, { 1,  3, }, { 2,  2, }, { 3,  1, }, { 4,  0, }, { 0,  5, },
+        { 1,  4, }, { 2,  3, }, { 3,  2, }, { 4,  1, }, { 5,  0, }, { 0,  6, }, { 1,  5, }, { 2,  4, },
+        { 3,  3, }, { 4,  2, }, { 5,  1, }, { 6,  0, }, { 0,  7, }, { 1,  6, }, { 2,  5, }, { 3,  4, },
+        { 4,  3, }, { 5,  2, }, { 6,  1, }, { 7,  0, }, { 1,  7, }, { 2,  6, }, { 3,  5, }, { 4,  4, },
+        { 5,  3, }, { 6,  2, }, { 7,  1, }, { 2,  7, }, { 3,  6, }, { 4,  5, }, { 5,  4, }, { 6,  3, },
+        { 7,  2, }, { 3,  7, }, { 4,  6, }, { 5,  5, }, { 6,  4, }, { 7,  3, }, { 4,  7, }, { 5,  6, },
+        { 6,  5, }, { 7,  4, }, { 5,  7, }, { 6,  6, }, { 7,  5, }, { 6,  7, }, { 7,  6, }, { 7,  7, }, };
+    int err;
+
+    for (int id = 0; id < 28; id ++) {
+        if (current->aps_chroma_present_flag || id % 3 == 2 || id == 27) {
+            flags(scaling_list_copy_mode_flag[id], 1, id);
+            if (!current->scaling_list_copy_mode_flag[id])
+                flags(scaling_list_pred_mode_flag[id], 1, id);
+            else
+                infer(scaling_list_pred_mode_flag[id], 0);
+            if ((current->scaling_list_copy_mode_flag[id] ||
+                 current->scaling_list_pred_mode_flag[id]) &&
+                 id != 0 && id != 2 && id != 8) {
+                int max_id_delta = (id < 2) ? id : ((id < 8) ? (id - 2) : (id - 8));
+                ues(scaling_list_pred_id_delta[id], 0, max_id_delta, 1, id);
+            }
+            if (!current->scaling_list_copy_mode_flag[id]) {
+                int matrix_size = id < 2 ? 2 : (id < 8 ? 4 : 8);
+                if (id > 13) {
+                    int idx = id - 14;
+                    ses(scaling_list_dc_coef[idx], -128, 127, 1, idx);
+                }
+                for (int i = 0; i < matrix_size * matrix_size; i++) {
+                    int x = diag_scan_order[i][0];
+                    int y = diag_scan_order[i][1];
+                    if (!(id > 25 && x >= 4 && y >= 4))
+                        ses(scaling_list_delta_coef[id][i], -128, 127, 2, id, i);
+                }
+            } else if (id > 13) {
+                int idx = id - 14;
+                infer(scaling_list_dc_coef[idx], 0);
+            }
+        } else {
+            infer(scaling_list_copy_mode_flag[id], 1);
+            infer(scaling_list_pred_mode_flag[id], 0);
+        }
+    }
+
+    return 0;
+}
+
+static int FUNC(aps)(CodedBitstreamContext *ctx, RWContext *rw,
+                     H266RawAPS *current, int prefix)
+{
+    int err;
+
+    if (prefix)
+        HEADER("Prefix Adaptation parameter set");
+    else
+        HEADER("Suffix Adaptation parameter set");
+
+    CHECK(FUNC(nal_unit_header)(ctx, rw, &current->nal_unit_header,
+                                prefix ? VVC_PREFIX_APS_NUT
+                                       : VVC_SUFFIX_APS_NUT));
+
+    ub(3, aps_params_type);
+    ub(5, aps_adaptation_parameter_set_id);
+    flag(aps_chroma_present_flag);
+    if (current->aps_params_type == VVC_ASP_TYPE_ALF)
+        CHECK(FUNC(alf_data)(ctx, rw, current));
+    else if(current->aps_params_type == VVC_ASP_TYPE_LMCS)
+        CHECK(FUNC(lmcs_data)(ctx, rw, current));
+    else if (current->aps_params_type == VVC_ASP_TYPE_SCALING)
+        CHECK(FUNC(scaling_list_data)(ctx, rw, current));
+    flag(aps_extension_flag);
+    if (current->aps_extension_flag)
+        CHECK(FUNC(extension_data) (ctx, rw, &current->extension_data));
+    CHECK(FUNC(rbsp_trailing_bits) (ctx, rw));
+
     return 0;
 }
 
@@ -2390,8 +2731,13 @@ static int FUNC(picture_header) (CodedBitstreamContext *ctx, RWContext *rw,
             ue(ph_max_mtt_hierarchy_depth_intra_slice_luma,
                0, 2 * (ctb_log2_size_y - min_cb_log2_size_y));
             if (current->ph_max_mtt_hierarchy_depth_intra_slice_luma != 0) {
+                min_qt_log2_size_intra_y =
+                    current->ph_log2_diff_min_qt_min_cb_intra_slice_luma +
+                    min_cb_log2_size_y;
                 ue(ph_log2_diff_max_bt_min_qt_intra_slice_luma,
-                   0, ctb_log2_size_y - min_qt_log2_size_intra_y);
+                   0, (sps->sps_qtbtt_dual_tree_intra_flag ?
+                       FFMIN(6, ctb_log2_size_y) :
+                       ctb_log2_size_y) - min_qt_log2_size_intra_y);
                 ue(ph_log2_diff_max_tt_min_qt_intra_slice_luma,
                    0, FFMIN(6, ctb_log2_size_y) - min_qt_log2_size_intra_y);
             } else {
@@ -3005,6 +3351,18 @@ static int FUNC(slice_header) (CodedBitstreamContext *ctx, RWContext *rw,
         flag(sh_ts_residual_coding_disabled_flag);
     else
         infer(sh_ts_residual_coding_disabled_flag, 0);
+
+    if (!current->sh_ts_residual_coding_disabled_flag &&
+        sps->sps_ts_residual_coding_rice_present_in_sh_flag)
+        ub(3, sh_ts_residual_coding_rice_idx_minus1);
+    else
+        infer(sh_ts_residual_coding_rice_idx_minus1, 0);
+
+    if (sps->sps_reverse_last_sig_coeff_enabled_flag)
+        flag(sh_reverse_last_sig_coeff_flag);
+    else
+        infer(sh_reverse_last_sig_coeff_flag, 0);
+
     if (pps->pps_slice_header_extension_present_flag) {
         ue(sh_slice_header_extension_length, 0, 256);
         for (i = 0; i < current->sh_slice_header_extension_length; i++)
@@ -3037,7 +3395,7 @@ static int FUNC(slice_header) (CodedBitstreamContext *ctx, RWContext *rw,
                  current->sh_slice_address +
                  current->sh_num_tiles_in_slice_minus1; tile_idx++) {
                 tile_y = tile_idx / pps->num_tile_rows;
-                height = pps->pps_tile_row_height_minus1[tile_y] + 1;
+                height = pps->row_height_val[tile_y];
                 num_entry_points += (entropy_sync ? height : 1);
             }
         }

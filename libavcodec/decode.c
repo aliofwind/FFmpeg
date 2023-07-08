@@ -41,13 +41,32 @@
 #include "libavutil/opt.h"
 
 #include "avcodec.h"
+#include "avcodec_internal.h"
 #include "bytestream.h"
 #include "bsf.h"
 #include "codec_internal.h"
 #include "decode.h"
 #include "hwconfig.h"
 #include "internal.h"
+#include "packet_internal.h"
 #include "thread.h"
+
+typedef struct DecodeContext {
+    AVCodecInternal avci;
+
+    /* to prevent infinite loop on errors when draining */
+    int nb_draining_errors;
+
+    /**
+     * The caller has submitted a NULL packet on input.
+     */
+    int draining_started;
+} DecodeContext;
+
+static DecodeContext *decode_ctx(AVCodecInternal *avci)
+{
+    return (DecodeContext *)avci;
+}
 
 static int apply_param_change(AVCodecContext *avctx, const AVPacket *avpkt)
 {
@@ -182,13 +201,10 @@ fail:
     return ret;
 }
 
-int ff_decode_get_packet(AVCodecContext *avctx, AVPacket *pkt)
+static int decode_get_packet(AVCodecContext *avctx, AVPacket *pkt)
 {
     AVCodecInternal *avci = avctx->internal;
     int ret;
-
-    if (avci->draining)
-        return AVERROR_EOF;
 
     ret = av_bsf_receive_packet(avci->bsf, pkt);
     if (ret == AVERROR_EOF)
@@ -210,6 +226,31 @@ int ff_decode_get_packet(AVCodecContext *avctx, AVPacket *pkt)
 finish:
     av_packet_unref(pkt);
     return ret;
+}
+
+int ff_decode_get_packet(AVCodecContext *avctx, AVPacket *pkt)
+{
+    AVCodecInternal *avci = avctx->internal;
+    DecodeContext     *dc = decode_ctx(avci);
+
+    if (avci->draining)
+        return AVERROR_EOF;
+
+    while (1) {
+        int ret = decode_get_packet(avctx, pkt);
+        if (ret == AVERROR(EAGAIN) &&
+            (!AVPACKET_IS_EMPTY(avci->buffer_pkt) || dc->draining_started)) {
+            ret = av_bsf_send_packet(avci->bsf, avci->buffer_pkt);
+            if (ret < 0) {
+                av_packet_unref(avci->buffer_pkt);
+                return ret;
+            }
+
+            continue;
+        }
+
+        return ret;
+    }
 }
 
 /**
@@ -438,7 +479,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
             int nb_errors_max = 20 + (HAVE_THREADS && avctx->active_thread_type & FF_THREAD_FRAME ?
                                 avctx->thread_count : 1);
 
-            if (avci->nb_draining_errors++ >= nb_errors_max) {
+            if (decode_ctx(avci)->nb_draining_errors++ >= nb_errors_max) {
                 av_log(avctx, AV_LOG_ERROR, "Too many errors when draining, this is a bug. "
                        "Stop draining and force EOF.\n");
                 avci->draining_done = 1;
@@ -613,12 +654,13 @@ FF_ENABLE_DEPRECATION_WARNINGS
 int attribute_align_arg avcodec_send_packet(AVCodecContext *avctx, const AVPacket *avpkt)
 {
     AVCodecInternal *avci = avctx->internal;
+    DecodeContext     *dc = decode_ctx(avci);
     int ret;
 
     if (!avcodec_is_open(avctx) || !av_codec_is_decoder(avctx->codec))
         return AVERROR(EINVAL);
 
-    if (avctx->internal->draining)
+    if (dc->draining_started)
         return AVERROR_EOF;
 
     if (avpkt && !avpkt->size && avpkt->data)
@@ -629,15 +671,10 @@ int attribute_align_arg avcodec_send_packet(AVCodecContext *avctx, const AVPacke
         ret = av_packet_ref(avci->buffer_pkt, avpkt);
         if (ret < 0)
             return ret;
-    }
+    } else
+        dc->draining_started = 1;
 
-    ret = av_bsf_send_packet(avci->bsf, avci->buffer_pkt);
-    if (ret < 0) {
-        av_packet_unref(avci->buffer_pkt);
-        return ret;
-    }
-
-    if (!avci->buffer_frame->buf[0]) {
+    if (!avci->buffer_frame->buf[0] && !dc->draining_started) {
         ret = decode_receive_frame_internal(avctx, avci->buffer_frame);
         if (ret < 0 && ret != AVERROR(EAGAIN) && ret != AVERROR_EOF)
             return ret;
@@ -1738,4 +1775,26 @@ AVBufferRef *ff_hwaccel_frame_priv_alloc(AVCodecContext *avctx,
     }
 
     return ref;
+}
+
+void ff_decode_flush_buffers(AVCodecContext *avctx)
+{
+    AVCodecInternal *avci = avctx->internal;
+    DecodeContext     *dc = decode_ctx(avci);
+
+    av_packet_unref(avci->last_pkt_props);
+    av_packet_unref(avci->in_pkt);
+
+    avctx->pts_correction_last_pts =
+    avctx->pts_correction_last_dts = INT64_MIN;
+
+    av_bsf_flush(avci->bsf);
+
+    dc->nb_draining_errors = 0;
+    dc->draining_started   = 0;
+}
+
+AVCodecInternal *ff_decode_internal_alloc(void)
+{
+    return av_mallocz(sizeof(DecodeContext));
 }

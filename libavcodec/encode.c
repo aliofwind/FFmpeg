@@ -27,10 +27,33 @@
 #include "libavutil/samplefmt.h"
 
 #include "avcodec.h"
+#include "avcodec_internal.h"
 #include "codec_internal.h"
 #include "encode.h"
 #include "frame_thread_encoder.h"
 #include "internal.h"
+
+typedef struct EncodeContext {
+    AVCodecInternal avci;
+
+    /**
+     * This is set to AV_PKT_FLAG_KEY for encoders that encode intra-only
+     * formats (i.e. whose codec descriptor has AV_CODEC_PROP_INTRA_ONLY set).
+     * This is used to set said flag generically for said encoders.
+     */
+    int intra_only_flag;
+
+    /**
+     * An audio frame with less than required samples has been submitted (and
+     * potentially padded with silence). Reject all subsequent frames.
+     */
+    int last_audio_frame;
+} EncodeContext;
+
+static EncodeContext *encode_ctx(AVCodecInternal *avci)
+{
+    return (EncodeContext*)avci;
+}
 
 int ff_alloc_packet(AVCodecContext *avctx, AVPacket *avpkt, int64_t size)
 {
@@ -157,7 +180,7 @@ static int pad_last_frame(AVCodecContext *s, AVFrame *frame, const AVFrame *src,
 
 fail:
     av_frame_unref(frame);
-    s->internal->last_audio_frame = 0;
+    encode_ctx(s->internal)->last_audio_frame = 0;
     return ret;
 }
 
@@ -371,7 +394,7 @@ static int encode_receive_packet_internal(AVCodecContext *avctx, AVPacket *avpkt
     } else
         ret = encode_simple_receive_packet(avctx, avpkt);
     if (ret >= 0)
-        avpkt->flags |= avci->intra_only_flag;
+        avpkt->flags |= encode_ctx(avci)->intra_only_flag;
 
     if (ret == AVERROR_EOF)
         avci->draining_done = 1;
@@ -429,6 +452,7 @@ static int encode_generate_icc_profile(av_unused AVCodecContext *c, av_unused AV
 static int encode_send_frame_internal(AVCodecContext *avctx, const AVFrame *src)
 {
     AVCodecInternal *avci = avctx->internal;
+    EncodeContext     *ec = encode_ctx(avci);
     AVFrame *dst = avci->buffer_frame;
     int ret;
 
@@ -441,7 +465,7 @@ static int encode_send_frame_internal(AVCodecContext *avctx, const AVFrame *src)
         /* check for valid frame size */
         if (!(avctx->codec->capabilities & AV_CODEC_CAP_VARIABLE_FRAME_SIZE)) {
             /* if we already got an undersized frame, that must have been the last */
-            if (avctx->internal->last_audio_frame) {
+            if (ec->last_audio_frame) {
                 av_log(avctx, AV_LOG_ERROR, "frame_size (%d) was not respected for a non-last frame\n", avctx->frame_size);
                 return AVERROR(EINVAL);
             }
@@ -450,7 +474,7 @@ static int encode_send_frame_internal(AVCodecContext *avctx, const AVFrame *src)
                 return AVERROR(EINVAL);
             }
             if (src->nb_samples < avctx->frame_size) {
-                avctx->internal->last_audio_frame = 1;
+                ec->last_audio_frame = 1;
                 if (!(avctx->codec->capabilities & AV_CODEC_CAP_SMALL_LAST_FRAME)) {
                     int pad_samples = avci->pad_samples ? avci->pad_samples : avctx->frame_size;
                     int out_samples = (src->nb_samples + pad_samples - 1) / pad_samples * pad_samples;
@@ -679,6 +703,7 @@ static int encode_preinit_audio(AVCodecContext *avctx)
 int ff_encode_preinit(AVCodecContext *avctx)
 {
     AVCodecInternal *avci = avctx->internal;
+    EncodeContext     *ec = encode_ctx(avci);
     int ret = 0;
 
     if (avctx->time_base.num <= 0 || avctx->time_base.den <= 0) {
@@ -709,7 +734,7 @@ int ff_encode_preinit(AVCodecContext *avctx)
         avctx->rc_initial_buffer_occupancy = avctx->rc_buffer_size * 3LL / 4;
 
     if (avctx->codec_descriptor->props & AV_CODEC_PROP_INTRA_ONLY)
-        avctx->internal->intra_only_flag = AV_PKT_FLAG_KEY;
+        ec->intra_only_flag = AV_PKT_FLAG_KEY;
 
     if (ffcodec(avctx->codec)->cb_type == FF_CODEC_CB_TYPE_ENCODE) {
         avci->in_frame = av_frame_alloc();
@@ -783,4 +808,19 @@ int ff_encode_receive_frame(AVCodecContext *avctx, AVFrame *frame)
 
     av_frame_move_ref(frame, avci->recon_frame);
     return 0;
+}
+
+void ff_encode_flush_buffers(AVCodecContext *avctx)
+{
+    AVCodecInternal *avci = avctx->internal;
+
+    if (avci->in_frame)
+        av_frame_unref(avci->in_frame);
+    if (avci->recon_frame)
+        av_frame_unref(avci->recon_frame);
+}
+
+AVCodecInternal *ff_encode_internal_alloc(void)
+{
+    return av_mallocz(sizeof(EncodeContext));
 }

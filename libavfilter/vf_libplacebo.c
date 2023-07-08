@@ -219,7 +219,8 @@ typedef struct LibplaceboContext {
     float tonemapping_param;
     int inverse_tonemapping;
     int tonemapping_lut_size;
-    float hybrid_mix;
+    float contrast_recovery;
+    float contrast_smoothness;
 
 #if FF_API_LIBPLACEBO_OPTS
     /* for backwards compatibility */
@@ -232,6 +233,7 @@ typedef struct LibplaceboContext {
     int tonemapping_mode;
     float crosstalk;
     float overshoot;
+    float hybrid_mix;
 #endif
 
     /* pl_dither_params */
@@ -360,12 +362,10 @@ static int update_settings(AVFilterContext *ctx)
     int err = 0;
     LibplaceboContext *s = ctx->priv;
     int gamut_mode = s->gamut_mode;
-    float hybrid_mix = s->hybrid_mix;
     uint8_t color_rgba[4];
 
-    RET(av_parse_color(color_rgba, s->fillcolor, -1, s));
-
 #if FF_API_LIBPLACEBO_OPTS
+    float hybrid_mix = s->hybrid_mix;
     /* backwards compatibility with older API */
     switch (s->tonemapping_mode) {
     case 0: /*PL_TONE_MAP_AUTO*/
@@ -389,6 +389,8 @@ static int update_settings(AVFilterContext *ctx)
     if (s->gamut_clipping)
         gamut_mode = GAMUT_MAP_DESATURATE;
 #endif
+
+    RET(av_parse_color(color_rgba, s->fillcolor, -1, s));
 
     s->deband_params = *pl_deband_params(
         .iterations = s->deband_iterations,
@@ -419,16 +421,22 @@ static int update_settings(AVFilterContext *ctx)
     );
 
     s->color_map_params = *pl_color_map_params(
-#if PL_API_VER >= 269
+#if FF_API_LIBPLACEBO_OPTS
+# if PL_API_VER >= 269
         .hybrid_mix = hybrid_mix,
-#elif FF_API_LIBPLACEBO_OPTS
+# else
         .tone_mapping_mode = s->tonemapping_mode,
         .tone_mapping_crosstalk = s->crosstalk,
+# endif
 #endif
         .tone_mapping_function = get_tonemapping_func(s->tonemapping),
         .tone_mapping_param = s->tonemapping_param,
         .inverse_tone_mapping = s->inverse_tonemapping,
         .lut_size = s->tonemapping_lut_size,
+#if PL_API_VER >= 285
+        .contrast_recovery = s->contrast_recovery,
+        .contrast_smoothness = s->contrast_smoothness,
+#endif
     );
 
     set_gamut_mode(&s->color_map_params, gamut_mode);
@@ -1396,7 +1404,8 @@ static const AVOption libplacebo_options[] = {
     { "tonemapping_param", "Tunable parameter for some tone-mapping functions", OFFSET(tonemapping_param), AV_OPT_TYPE_FLOAT, {.dbl = 0.0}, 0.0, 100.0, .flags = DYNAMIC },
     { "inverse_tonemapping", "Inverse tone mapping (range expansion)", OFFSET(inverse_tonemapping), AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, DYNAMIC },
     { "tonemapping_lut_size", "Tone-mapping LUT size", OFFSET(tonemapping_lut_size), AV_OPT_TYPE_INT, {.i64 = 256}, 2, 1024, DYNAMIC },
-    { "hybrid_mix", "Tone-mapping hybrid LMS mixing coefficient", OFFSET(hybrid_mix), AV_OPT_TYPE_FLOAT, {.dbl = 0.20}, 0.0, 1.00, DYNAMIC },
+    { "contrast_recovery", "HDR contrast recovery strength", OFFSET(contrast_recovery), AV_OPT_TYPE_FLOAT, {.dbl = 0.30}, 0.0, 3.0, DYNAMIC },
+    { "contrast_smoothness", "HDR contrast recovery smoothness", OFFSET(contrast_smoothness), AV_OPT_TYPE_FLOAT, {.dbl = 3.50}, 1.0, 32.0, DYNAMIC },
 
 #if FF_API_LIBPLACEBO_OPTS
     /* deprecated options for backwards compatibility, defaulting to -1 to not override the new defaults */
@@ -1417,6 +1426,7 @@ static const AVOption libplacebo_options[] = {
         { "luma", "Luminance", 0, AV_OPT_TYPE_CONST, {.i64 = 4}, 0, 0, STATIC, "tonemap_mode" },
     { "tonemapping_crosstalk", "Crosstalk factor for tone-mapping", OFFSET(crosstalk), AV_OPT_TYPE_FLOAT, {.dbl = 0.04}, 0.0, 0.30, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
     { "overshoot", "Tone-mapping overshoot margin", OFFSET(overshoot), AV_OPT_TYPE_FLOAT, {.dbl = 0.05}, 0.0, 1.0, DYNAMIC | AV_OPT_FLAG_DEPRECATED },
+    { "hybrid_mix", "Tone-mapping hybrid LMS mixing coefficient", OFFSET(hybrid_mix), AV_OPT_TYPE_FLOAT, {.dbl = 0.20}, 0.0, 1.00, DYNAMIC },
 #endif
 
     { "dithering", "Dither method to use", OFFSET(dithering), AV_OPT_TYPE_INT, {.i64 = PL_DITHER_BLUE_NOISE}, -1, PL_DITHER_METHOD_COUNT - 1, DYNAMIC, "dither" },
