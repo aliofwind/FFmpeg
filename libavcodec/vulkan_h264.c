@@ -43,6 +43,8 @@ typedef struct H264VulkanDecodePicture {
     VkVideoDecodeH264PictureInfoKHR h264_pic_info;
 } H264VulkanDecodePicture;
 
+const static int h264_scaling_list8_order[] = { 0, 3, 1, 4, 2, 5 };
+
 static int vk_h264_fill_pict(AVCodecContext *avctx, H264Picture **ref_src,
                              VkVideoReferenceSlotInfoKHR *ref_slot,       /* Main structure */
                              VkVideoPictureResourceInfoKHR *ref,          /* Goes in ^ */
@@ -147,7 +149,7 @@ static void set_sps(const SPS *sps,
                STD_VIDEO_H264_SCALING_LIST_4X4_NUM_ELEMENTS * sizeof(**sps->scaling_matrix4));
 
     for (int i = 0; i < STD_VIDEO_H264_SCALING_LIST_8X8_NUM_LISTS; i++)
-        memcpy(vksps_scaling->ScalingList8x8[i], sps->scaling_matrix8[i],
+        memcpy(vksps_scaling->ScalingList8x8[i], sps->scaling_matrix8[h264_scaling_list8_order[i]],
                STD_VIDEO_H264_SCALING_LIST_8X8_NUM_ELEMENTS * sizeof(**sps->scaling_matrix8));
 
     *vksps_vui_header = (StdVideoH264HrdParameters) {
@@ -252,7 +254,7 @@ static void set_pps(const PPS *pps, const SPS *sps,
                STD_VIDEO_H264_SCALING_LIST_4X4_NUM_ELEMENTS * sizeof(**pps->scaling_matrix4));
 
     for (int i = 0; i < STD_VIDEO_H264_SCALING_LIST_8X8_NUM_LISTS; i++)
-        memcpy(vkpps_scaling->ScalingList8x8[i], pps->scaling_matrix8[i],
+        memcpy(vkpps_scaling->ScalingList8x8[i], pps->scaling_matrix8[h264_scaling_list8_order[i]],
                STD_VIDEO_H264_SCALING_LIST_8X8_NUM_ELEMENTS * sizeof(**pps->scaling_matrix8));
 
     *vkpps = (StdVideoH264PictureParameterSet) {
@@ -558,11 +560,11 @@ static void vk_h264_free_frame_priv(void *_hwctx, uint8_t *data)
     av_free(hp);
 }
 
-const AVHWAccel ff_h264_vulkan_hwaccel = {
-    .name                  = "h264_vulkan",
-    .type                  = AVMEDIA_TYPE_VIDEO,
-    .id                    = AV_CODEC_ID_H264,
-    .pix_fmt               = AV_PIX_FMT_VULKAN,
+const FFHWAccel ff_h264_vulkan_hwaccel = {
+    .p.name                = "h264_vulkan",
+    .p.type                = AVMEDIA_TYPE_VIDEO,
+    .p.id                  = AV_CODEC_ID_H264,
+    .p.pix_fmt             = AV_PIX_FMT_VULKAN,
     .start_frame           = &vk_h264_start_frame,
     .decode_slice          = &vk_h264_decode_slice,
     .end_frame             = &vk_h264_end_frame,

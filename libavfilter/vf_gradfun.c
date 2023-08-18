@@ -38,7 +38,6 @@
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avfilter.h"
-#include "formats.h"
 #include "gradfun.h"
 #include "internal.h"
 #include "video.h"
@@ -236,13 +235,6 @@ static const AVFilterPad avfilter_vf_gradfun_inputs[] = {
     },
 };
 
-static const AVFilterPad avfilter_vf_gradfun_outputs[] = {
-    {
-        .name = "default",
-        .type = AVMEDIA_TYPE_VIDEO,
-    },
-};
-
 const AVFilter ff_vf_gradfun = {
     .name          = "gradfun",
     .description   = NULL_IF_CONFIG_SMALL("Debands video quickly using gradients."),
@@ -251,7 +243,7 @@ const AVFilter ff_vf_gradfun = {
     .init          = init,
     .uninit        = uninit,
     FILTER_INPUTS(avfilter_vf_gradfun_inputs),
-    FILTER_OUTPUTS(avfilter_vf_gradfun_outputs),
+    FILTER_OUTPUTS(ff_video_default_filterpad),
     FILTER_PIXFMTS_ARRAY(pix_fmts),
     .flags         = AVFILTER_FLAG_SUPPORT_TIMELINE_GENERIC,
 };

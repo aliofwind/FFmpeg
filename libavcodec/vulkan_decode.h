@@ -20,7 +20,7 @@
 #define AVCODEC_VULKAN_DECODE_H
 
 #include "decode.h"
-#include "hwconfig.h"
+#include "hwaccel_internal.h"
 #include "internal.h"
 
 #include "vulkan_video.h"
@@ -37,7 +37,7 @@ typedef struct FFVulkanDecodeProfileData {
 typedef struct FFVulkanDecodeShared {
     FFVulkanContext s;
     FFVkVideoCommon common;
-    FFVkExecPool exec_pool;
+    FFVkQueueFamilyCtx qf;
 
     VkVideoCapabilitiesKHR caps;
     VkVideoDecodeCapabilitiesKHR dec_caps;
@@ -56,6 +56,7 @@ typedef struct FFVulkanDecodeShared {
 typedef struct FFVulkanDecodeContext {
     AVBufferRef *shared_ref;
     AVBufferRef *session_params;
+    FFVkExecPool exec_pool;
 
     int dedicated_dpb; /* Oddity  #1 - separate DPB images */
     int layered_dpb;   /* Madness #1 - layered  DPB images */

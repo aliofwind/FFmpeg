@@ -25,6 +25,12 @@ version <next>:
 - Raw VVC bitstream parser, muxer and demuxer
 - Bitstream filter for editing metadata in VVC streams
 - Bitstream filter for converting VVC from MP4 to Annex B
+- scale_vt filter for videotoolbox
+- transpose_vt filter for videotoolbox
+- support for the P_SKIP hinting to speed up libx264 encoding
+- Support HEVC,VP9,AV1 codec in enhanced flv format
+- apsnr and asisdr audio filters
+
 
 version 6.0:
 - Radiance HDR image support

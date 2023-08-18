@@ -33,6 +33,7 @@
 #include "bytestream.h"
 #include "codec_internal.h"
 #include "decode.h"
+#include "hwaccel_internal.h"
 #include "internal.h"
 #include "hwconfig.h"
 #include "profiles.h"
@@ -907,17 +908,11 @@ static int av1_frame_alloc(AVCodecContext *avctx, AV1Frame *f)
         break;
     }
 
-    if (avctx->hwaccel) {
-        const AVHWAccel *hwaccel = avctx->hwaccel;
-        if (hwaccel->frame_priv_data_size) {
-            f->hwaccel_priv_buf = ff_hwaccel_frame_priv_alloc(avctx, hwaccel);
-            if (!f->hwaccel_priv_buf) {
-                ret = AVERROR(ENOMEM);
-                goto fail;
-            }
-            f->hwaccel_picture_private = f->hwaccel_priv_buf->data;
-        }
-    }
+    ret = ff_hwaccel_frame_priv_alloc(avctx, &f->hwaccel_picture_private,
+                                      &f->hwaccel_priv_buf);
+    if (ret < 0)
+        goto fail;
+
     return 0;
 
 fail:
@@ -1239,9 +1234,9 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
                 }
             }
 
-            if (avctx->hwaccel && avctx->hwaccel->decode_params) {
-                ret = avctx->hwaccel->decode_params(avctx, unit->type, unit->data,
-                                                    unit->data_size);
+            if (FF_HW_HAS_CB(avctx, decode_params)) {
+                ret = FF_HW_CALL(avctx, decode_params, unit->type,
+                                 unit->data, unit->data_size);
                 if (ret < 0) {
                     av_log(avctx, AV_LOG_ERROR, "HW accel decode params fail.\n");
                     s->raw_seq = NULL;
@@ -1311,8 +1306,7 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
             s->cur_frame.temporal_id = header->temporal_id;
 
             if (avctx->hwaccel && s->cur_frame.f->buf[0]) {
-                ret = avctx->hwaccel->start_frame(avctx, unit->data,
-                                                  unit->data_size);
+                ret = FF_HW_CALL(avctx, start_frame, unit->data, unit->data_size);
                 if (ret < 0) {
                     av_log(avctx, AV_LOG_ERROR, "HW accel start frame fail.\n");
                     goto end;
@@ -1338,9 +1332,8 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
                 goto end;
 
             if (avctx->hwaccel && s->cur_frame.f->buf[0]) {
-                ret = avctx->hwaccel->decode_slice(avctx,
-                                                   raw_tile_group->tile_data.data,
-                                                   raw_tile_group->tile_data.data_size);
+                ret = FF_HW_CALL(avctx, decode_slice, raw_tile_group->tile_data.data,
+                                 raw_tile_group->tile_data.data_size);
                 if (ret < 0) {
                     av_log(avctx, AV_LOG_ERROR,
                            "HW accel decode slice fail.\n");
@@ -1402,7 +1395,7 @@ static int av1_receive_frame_internal(AVCodecContext *avctx, AVFrame *frame)
         if (raw_tile_group && (s->tile_num == raw_tile_group->tg_end + 1)) {
             int show_frame = s->raw_frame_header->show_frame;
             if (avctx->hwaccel && s->cur_frame.f->buf[0]) {
-                ret = avctx->hwaccel->end_frame(avctx);
+                ret = FF_HW_SIMPLE_CALL(avctx, end_frame);
                 if (ret < 0) {
                     av_log(avctx, AV_LOG_ERROR, "HW accel end frame fail.\n");
                     goto end;
@@ -1498,8 +1491,8 @@ static void av1_decode_flush(AVCodecContext *avctx)
     ff_cbs_fragment_reset(&s->current_obu);
     ff_cbs_flush(s->cbc);
 
-    if (avctx->hwaccel && avctx->hwaccel->flush)
-        avctx->hwaccel->flush(avctx);
+    if (FF_HW_HAS_CB(avctx, flush))
+        FF_HW_SIMPLE_CALL(avctx, flush);
 }
 
 #define OFFSET(x) offsetof(AV1DecContext, x)
@@ -1527,8 +1520,7 @@ const FFCodec ff_av1_decoder = {
     .close                 = av1_decode_free,
     FF_CODEC_RECEIVE_FRAME_CB(av1_receive_frame),
     .p.capabilities        = AV_CODEC_CAP_DR1 | AV_CODEC_CAP_AVOID_PROBING,
-    .caps_internal         = FF_CODEC_CAP_INIT_CLEANUP |
-                             FF_CODEC_CAP_SETS_PKT_DTS,
+    .caps_internal         = FF_CODEC_CAP_INIT_CLEANUP,
     .flush                 = av1_decode_flush,
     .p.profiles            = NULL_IF_CONFIG_SMALL(ff_av1_profiles),
     .p.priv_class          = &av1_class,

@@ -484,8 +484,6 @@ static int vk_av1_start_frame(AVCodecContext          *avctx,
         ap->av1_frame_header.film_grain.ar_coeffs_cr_plus_128[24] = film_grain->ar_coeffs_cr_plus_128[24];
     }
 
-    av_log(avctx, AV_LOG_DEBUG, "Created frame parameters");
-
     /* Workaround for a spec issue. */
     ap->dec = dec;
 
@@ -574,11 +572,11 @@ static void vk_av1_free_frame_priv(void *_hwctx, uint8_t *data)
     av_free(ap);
 }
 
-const AVHWAccel ff_av1_vulkan_hwaccel = {
-    .name                  = "av1_vulkan",
-    .type                  = AVMEDIA_TYPE_VIDEO,
-    .id                    = AV_CODEC_ID_AV1,
-    .pix_fmt               = AV_PIX_FMT_VULKAN,
+const FFHWAccel ff_av1_vulkan_hwaccel = {
+    .p.name                = "av1_vulkan",
+    .p.type                = AVMEDIA_TYPE_VIDEO,
+    .p.id                  = AV_CODEC_ID_AV1,
+    .p.pix_fmt             = AV_PIX_FMT_VULKAN,
     .start_frame           = &vk_av1_start_frame,
     .decode_slice          = &vk_av1_decode_slice,
     .end_frame             = &vk_av1_end_frame,

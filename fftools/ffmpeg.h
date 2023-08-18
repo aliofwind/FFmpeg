@@ -56,6 +56,7 @@
 #define FFMPEG_ROTATION_METADATA 1
 #define FFMPEG_OPT_QPHIST 1
 #define FFMPEG_OPT_ADRIFT_THRESHOLD 1
+#define FFMPEG_OPT_ENC_TIME_BASE_NUM 1
 
 enum VideoSyncMethod {
     VSYNC_AUTO = -1,
@@ -66,7 +67,10 @@ enum VideoSyncMethod {
     VSYNC_DROP,
 };
 
-#define MAX_STREAMS 1024    /* arbitrary sanity check value */
+enum EncTimeBase {
+    ENC_TIME_BASE_DEMUX  = -1,
+    ENC_TIME_BASE_FILTER = -2,
+};
 
 enum HWAccelID {
     HWACCEL_NONE = 0,
@@ -177,9 +181,8 @@ typedef struct OptionsContext {
     int subtitle_disable;
     int data_disable;
 
-    /* indexed by output file stream index */
-    int   *streamid_map;
-    int nb_streamid_map;
+    // keys are stream indices
+    AVDictionary *streamid;
 
     SpecifierOpt *metadata;
     int        nb_metadata;
@@ -283,7 +286,6 @@ typedef struct InputFilter {
 } InputFilter;
 
 typedef struct OutputFilter {
-    AVFilterContext     *filter;
     struct OutputStream *ost;
     struct FilterGraph  *graph;
     uint8_t             *name;
@@ -293,18 +295,6 @@ typedef struct OutputFilter {
     uint8_t             *linklabel;
 
     enum AVMediaType     type;
-
-    /* desired output stream properties */
-    int width, height;
-    int format;
-    int sample_rate;
-    AVChannelLayout ch_layout;
-
-    // those are only set if no format is specified and the encoder gives us multiple options
-    // They point directly to the relevant lists of the encoder.
-    const int *formats;
-    const AVChannelLayout *ch_layouts;
-    const int *sample_rates;
 
     /* pts of the last frame received from this filter, in AV_TIME_BASE_Q */
     int64_t last_pts;
@@ -639,9 +629,13 @@ typedef struct OutputFile {
 
 // optionally attached as opaque_ref to decoded AVFrames
 typedef struct FrameData {
-    uint64_t   idx;
-    int64_t    pts;
-    AVRational tb;
+    // properties that come from the decoder
+    struct {
+        uint64_t   frame_num;
+
+        int64_t    pts;
+        AVRational tb;
+    } dec;
 
     AVRational frame_rate_filter;
 
@@ -710,16 +704,16 @@ void term_exit(void);
 void show_usage(void);
 
 void remove_avoptions(AVDictionary **a, AVDictionary *b);
-void assert_avoptions(AVDictionary *m);
+int check_avoptions(AVDictionary *m);
 
-void assert_file_overwrite(const char *filename);
+int assert_file_overwrite(const char *filename);
 char *file_read(const char *filename);
 AVDictionary *strip_specifiers(const AVDictionary *dict);
-const AVCodec *find_codec_or_die(void *logctx, const char *name,
-                                 enum AVMediaType type, int encoder);
+int find_codec(void *logctx, const char *name,
+               enum AVMediaType type, int encoder, const AVCodec **codec);
 int parse_and_set_vsync(const char *arg, int *vsync_var, int file_idx, int st_idx, int is_global);
 
-void check_filter_outputs(void);
+int check_filter_outputs(void);
 int filtergraph_is_simple(const FilterGraph *fg);
 int init_simple_filtergraph(InputStream *ist, OutputStream *ost,
                             char *graph_desc);
@@ -746,7 +740,7 @@ void ifilter_sub2video_heartbeat(InputFilter *ifilter, int64_t pts, AVRational t
  */
 int ifilter_parameters_from_dec(InputFilter *ifilter, const AVCodecContext *dec);
 
-void ofilter_bind_ost(OutputFilter *ofilter, OutputStream *ost);
+int ofilter_bind_ost(OutputFilter *ofilter, OutputStream *ost);
 
 /**
  * Create a new filtergraph in the global filtergraph list.
@@ -754,7 +748,7 @@ void ofilter_bind_ost(OutputFilter *ofilter, OutputStream *ost);
  * @param graph_desc Graph description; an av_malloc()ed string, filtergraph
  *                   takes ownership of it.
  */
-FilterGraph *fg_create(char *graph_desc);
+int fg_create(FilterGraph **pfg, char *graph_desc);
 
 void fg_free(FilterGraph **pfg);
 
@@ -768,12 +762,12 @@ void fg_free(FilterGraph **pfg);
 int fg_transcode_step(FilterGraph *graph, InputStream **best_ist);
 
 /**
- * Get and encode new output from any of the filtergraphs, without causing
+ * Get and encode new output from specified filtergraph, without causing
  * activity.
  *
  * @return  0 for success, <0 for severe errors
  */
-int reap_filters(int flush);
+int reap_filters(FilterGraph *fg, int flush);
 
 int ffmpeg_parse_options(int argc, char **argv);
 
@@ -816,9 +810,9 @@ int enc_alloc(Encoder **penc, const AVCodec *codec);
 void enc_free(Encoder **penc);
 
 int enc_open(OutputStream *ost, AVFrame *frame);
-void enc_subtitle(OutputFile *of, OutputStream *ost, const AVSubtitle *sub);
-void enc_frame(OutputStream *ost, AVFrame *frame);
-void enc_flush(void);
+int enc_subtitle(OutputFile *of, OutputStream *ost, const AVSubtitle *sub);
+int enc_frame(OutputStream *ost, AVFrame *frame);
+int enc_flush(void);
 
 /*
  * Initialize muxing state for the given stream, should be called
@@ -833,12 +827,12 @@ void of_close(OutputFile **pof);
 
 void of_enc_stats_close(void);
 
-void of_output_packet(OutputFile *of, OutputStream *ost, AVPacket *pkt);
+int of_output_packet(OutputFile *of, OutputStream *ost, AVPacket *pkt);
 
 /**
  * @param dts predicted packet dts in AV_TIME_BASE_Q
  */
-void of_streamcopy(OutputStream *ost, const AVPacket *pkt, int64_t dts);
+int of_streamcopy(OutputStream *ost, const AVPacket *pkt, int64_t dts);
 
 int64_t of_filesize(OutputFile *of);
 
@@ -917,7 +911,7 @@ static inline int err_merge(int err0, int err1)
             so = &o->name[_i];\
             _matches++;\
         } else if (_ret < 0)\
-            exit_program(1);\
+            return _ret;\
     }\
     if (_matches > 1)\
        WARN_MULTIPLE_OPT_USAGE(name, type, so, st);\

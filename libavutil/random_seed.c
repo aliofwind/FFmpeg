@@ -59,6 +59,7 @@ static int read_random(uint8_t *dst, size_t len, const char *file)
 
     if (!fp)
         return AVERROR_UNKNOWN;
+    setvbuf(fp, NULL, _IONBF, 0);
     err = fread(dst, 1, len, fp);
     fclose(fp);
 
@@ -142,7 +143,7 @@ int av_random_bytes(uint8_t* buf, size_t len)
     }
 #endif
 
-#if HAVE_ARC4RANDOM
+#if HAVE_ARC4RANDOM_BUF
     arc4random_buf(buf, len);
     return 0;
 #endif

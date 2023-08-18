@@ -20,15 +20,11 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#include "libavcodec/get_bits.h"
-#include "libavcodec/golomb.h"
-#include "libavcodec/internal.h"
 #include "libavcodec/evc.h"
 #include "libavcodec/bsf.h"
 
 #include "libavutil/opt.h"
 
-#include "rawdec.h"
 #include "avformat.h"
 #include "avio_internal.h"
 #include "evc.h"
@@ -162,6 +158,8 @@ static int evc_read_packet(AVFormatContext *s, AVPacket *pkt)
         ret = avio_read(s->pb, buf, EVC_NALU_LENGTH_PREFIX_SIZE);
         if (ret < 0)
             return ret;
+        if (ret != EVC_NALU_LENGTH_PREFIX_SIZE)
+            return AVERROR_INVALIDDATA;
 
         nalu_size = evc_read_nal_unit_length(buf, EVC_NALU_LENGTH_PREFIX_SIZE);
         if (!nalu_size || nalu_size > INT_MAX)
