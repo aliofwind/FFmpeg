@@ -90,6 +90,16 @@ FATE_MATROSKA-$(call TRANSCODE, PCM_S24BE PCM_S24LE, MATROSKA, WAV_DEMUXER) \
                 += fate-matroska-move-cues-to-front
 fate-matroska-move-cues-to-front: CMD = transcode wav $(TARGET_SAMPLES)/audio-reference/divertimenti_2ch_96kHz_s24.wav matroska "-map 0 -map 0 -c:a:0 pcm_s24be -c:a:1 copy -cluster_time_limit 5 -cues_to_front yes -metadata_header_padding 7840 -write_crc32 0" "-map 0 -c copy -t 0.1"
 
+# This test covers the case in which a displaymatrix is not a rotation
+# and is therefore ignored by the muxer, i.e. the ffprobe output of
+# side data should be empty.
+FATE_MATROSKA_FFMPEG_FFPROBE-$(call REMUX, MATROSKA, MOV_DEMUXER H264_PARSER H264_DECODER) \
+                               += fate-matroska-non-rotation-displaymatrix
+fate-matroska-non-rotation-displaymatrix: CMD = transcode mov $(TARGET_SAMPLES)/mov/displaymatrix.mov matroska \
+    "-c copy -frames:v 5" \
+    "-c copy" \
+    "-show_entries stream_side_data_list"
+
 # This tests DOVI (reading from MP4 and Matroska and writing to Matroska)
 # as well as writing the Cues at the front (by shifting data) if
 # the initially reserved amount of space turns out to be insufficient.
@@ -228,10 +238,10 @@ FATE_MATROSKA_FFMPEG_FFPROBE-$(call REMUX, MATROSKA, OGG_DEMUXER THEORA_DECODER)
 fate-matroska-stereo_mode: CMD = transcode ogg $(TARGET_SAMPLES)/vp3/offset_test.ogv matroska \
     "-c copy -write_crc32 0 -default_mode infer \
      -map 0 -disposition:s:0 +original+dub -metadata:s:0 language=ger \
-     -map 0 -metadata:s:1 stereo_mode=left_right -metadata:s:1 language=ger-at -metadata:s:1 description-ger=Deutsch -metadata:s:1 description-fre=Français \
-     -map 0 -metadata:s:2 stereo_mode=bottom_top -metadata:s:2 language=eng -metadata:s:2 description-de=Deutsch -metadata:s:2 description-fra=Français \
+     -map 0 -metadata:s:1 stereo_mode=left_right -metadata:s:1 language=ger-at -metadata:s:1 description-ger=Deutsch -metadata:s:1 description-fre=Francais \
+     -map 0 -metadata:s:2 stereo_mode=bottom_top -metadata:s:2 language=eng -metadata:s:2 description-de=Deutsch -metadata:s:2 description-fra=Francais \
      -map 0 -metadata:s:3 stereo_mode=row_interleaved_rl -sar:3 3:1 -disposition:3 +default -metadata:s:3 language=deu-at \
-     -map 0 -metadata:s:4 stereo_mode=col_interleaved_rl -sar:4 16:9 -metadata:s:4 language=fre -metadata:s:4 description-deu-at=Österreichisch \
+     -map 0 -metadata:s:4 stereo_mode=col_interleaved_rl -sar:4 16:9 -metadata:s:4 language=fre -metadata:s:4 description-deu-at=Oesterreichisch \
      -map 0 -metadata:s:5 stereo_mode=anaglyph_cyan_red -sar:5 16:9 -disposition:5 +default -metadata:s:5 language=fra \
      -map 0 -metadata:s:6 stereo_mode=12 -sar:6 2:1 -metadata:s:6 language=de -metadata:s:6 description-deu=Deutsch" \
     "-map 0 -c copy" \

@@ -26,11 +26,13 @@
  */
 
 #include "libavutil/avassert.h"
+#include "libavutil/emms.h"
 #include "error_resilience.h"
 #include "avcodec.h"
 #include "h264dec.h"
 #include "hwaccel_internal.h"
 #include "mpegutils.h"
+#include "refstruct.h"
 #include "thread.h"
 #include "threadframe.h"
 
@@ -44,24 +46,26 @@ void ff_h264_unref_picture(H264Context *h, H264Picture *pic)
 
     ff_thread_release_ext_buffer(h->avctx, &pic->tf);
     ff_thread_release_buffer(h->avctx, pic->f_grain);
-    av_buffer_unref(&pic->hwaccel_priv_buf);
+    ff_refstruct_unref(&pic->hwaccel_picture_private);
 
     av_buffer_unref(&pic->qscale_table_buf);
     av_buffer_unref(&pic->mb_type_buf);
-    av_buffer_unref(&pic->pps_buf);
+    ff_refstruct_unref(&pic->pps);
     for (i = 0; i < 2; i++) {
         av_buffer_unref(&pic->motion_val_buf[i]);
         av_buffer_unref(&pic->ref_index_buf[i]);
     }
+    av_buffer_unref(&pic->decode_error_flags);
 
     memset((uint8_t*)pic + off, 0, sizeof(*pic) - off);
 }
 
 static void h264_copy_picture_params(H264Picture *dst, const H264Picture *src)
 {
+    ff_refstruct_replace(&dst->pps, src->pps);
+
     dst->qscale_table = src->qscale_table;
     dst->mb_type      = src->mb_type;
-    dst->pps          = src->pps;
 
     for (int i = 0; i < 2; i++) {
         dst->motion_val[i] = src->motion_val[i];
@@ -90,7 +94,7 @@ static void h264_copy_picture_params(H264Picture *dst, const H264Picture *src)
     dst->needs_fg      = src->needs_fg;
 }
 
-int ff_h264_ref_picture(H264Context *h, H264Picture *dst, H264Picture *src)
+int ff_h264_ref_picture(H264Context *h, H264Picture *dst, const H264Picture *src)
 {
     int ret, i;
 
@@ -111,8 +115,7 @@ int ff_h264_ref_picture(H264Context *h, H264Picture *dst, H264Picture *src)
 
     dst->qscale_table_buf = av_buffer_ref(src->qscale_table_buf);
     dst->mb_type_buf      = av_buffer_ref(src->mb_type_buf);
-    dst->pps_buf          = av_buffer_ref(src->pps_buf);
-    if (!dst->qscale_table_buf || !dst->mb_type_buf || !dst->pps_buf) {
+    if (!dst->qscale_table_buf || !dst->mb_type_buf) {
         ret = AVERROR(ENOMEM);
         goto fail;
     }
@@ -126,14 +129,12 @@ int ff_h264_ref_picture(H264Context *h, H264Picture *dst, H264Picture *src)
         }
     }
 
-    if (src->hwaccel_picture_private) {
-        dst->hwaccel_priv_buf = av_buffer_ref(src->hwaccel_priv_buf);
-        if (!dst->hwaccel_priv_buf) {
-            ret = AVERROR(ENOMEM);
-            goto fail;
-        }
-        dst->hwaccel_picture_private = dst->hwaccel_priv_buf->data;
-    }
+    ff_refstruct_replace(&dst->hwaccel_picture_private,
+                          src->hwaccel_picture_private);
+
+    ret = av_buffer_replace(&dst->decode_error_flags, src->decode_error_flags);
+    if (ret < 0)
+        goto fail;
 
     h264_copy_picture_params(dst, src);
 
@@ -168,7 +169,6 @@ int ff_h264_replace_picture(H264Context *h, H264Picture *dst, const H264Picture 
 
     ret  = av_buffer_replace(&dst->qscale_table_buf, src->qscale_table_buf);
     ret |= av_buffer_replace(&dst->mb_type_buf, src->mb_type_buf);
-    ret |= av_buffer_replace(&dst->pps_buf, src->pps_buf);
     if (ret < 0)
         goto fail;
 
@@ -179,11 +179,12 @@ int ff_h264_replace_picture(H264Context *h, H264Picture *dst, const H264Picture 
             goto fail;
     }
 
-    ret = av_buffer_replace(&dst->hwaccel_priv_buf, src->hwaccel_priv_buf);
+    ff_refstruct_replace(&dst->hwaccel_picture_private,
+                          src->hwaccel_picture_private);
+
+    ret = av_buffer_replace(&dst->decode_error_flags, src->decode_error_flags);
     if (ret < 0)
         goto fail;
-
-    dst->hwaccel_picture_private = src->hwaccel_picture_private;
 
     h264_copy_picture_params(dst, src);
 
@@ -193,7 +194,7 @@ fail:
     return ret;
 }
 
-void ff_h264_set_erpic(ERPicture *dst, H264Picture *src)
+void ff_h264_set_erpic(ERPicture *dst, const H264Picture *src)
 {
 #if CONFIG_ERROR_RESILIENCE
     int i;
@@ -239,7 +240,7 @@ int ff_h264_field_end(H264Context *h, H264SliceContext *sl, int in_setup)
             av_log(avctx, AV_LOG_ERROR,
                    "hardware accelerator failed to decode picture\n");
     } else if (!in_setup && cur->needs_fg && (!FIELD_PICTURE(h) || !h->first_field)) {
-        AVFrameSideData *sd = av_frame_get_side_data(cur->f, AV_FRAME_DATA_FILM_GRAIN_PARAMS);
+        const AVFrameSideData *sd = av_frame_get_side_data(cur->f, AV_FRAME_DATA_FILM_GRAIN_PARAMS);
 
         err = AVERROR_INVALIDDATA;
         if (sd) // a decoding error may have happened before the side data could be allocated

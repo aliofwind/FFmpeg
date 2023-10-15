@@ -230,9 +230,9 @@ static av_cold void init_static(void)
         static VLCElem vlc_buf[3 * VLC_STATIC_SIZE];
         huff_vlc[i].table           = &vlc_buf[i * VLC_STATIC_SIZE];
         huff_vlc[i].table_allocated = VLC_STATIC_SIZE;
-        init_vlc(&huff_vlc[i], VLC_BITS, 18,
+        vlc_init(&huff_vlc[i], VLC_BITS, 18,
                  &ff_mlp_huffman_tables[i][0][1], 2, 1,
-                 &ff_mlp_huffman_tables[i][0][0], 2, 1, INIT_VLC_USE_NEW_STATIC);
+                 &ff_mlp_huffman_tables[i][0][0], 2, 1, VLC_INIT_USE_STATIC);
     }
 
     ff_mlp_init_crc();
@@ -391,6 +391,7 @@ static int read_major_sync(MLPDecodeContext *m, GetBitContext *gb)
     m->access_unit_size_pow2 = mh.access_unit_size_pow2;
 
     m->num_substreams        = mh.num_substreams;
+    m->extended_substream_info = mh.extended_substream_info;
     m->substream_info        = mh.substream_info;
 
     /*  If there is a 4th substream and the MSB of substream_info is set,
@@ -398,7 +399,7 @@ static int read_major_sync(MLPDecodeContext *m, GetBitContext *gb)
      */
     if (m->avctx->codec_id == AV_CODEC_ID_TRUEHD
             && m->num_substreams == 4 && m->substream_info >> 7 == 1) {
-        m->avctx->profile     = FF_PROFILE_TRUEHD_ATMOS;
+        m->avctx->profile     = AV_PROFILE_TRUEHD_ATMOS;
     }
 
     /* limit to decoding 3 substreams, as the 4th is used by Dolby Atmos for non-audio data */

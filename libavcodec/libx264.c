@@ -563,7 +563,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
             sei->payloads[0].payload_size = sei_size;
             sei->payloads[0].payload      = sei_data;
-            sei->payloads[0].payload_type = 4;
+            sei->payloads[0].payload_type = SEI_TYPE_USER_DATA_REGISTERED_ITU_T_T35;
             sei->num_payloads = 1;
         }
     }
@@ -1048,22 +1048,22 @@ static av_cold int X264_init(AVCodecContext *avctx)
     /* Allow specifying the x264 profile through AVCodecContext. */
     if (!x4->profile)
         switch (avctx->profile) {
-        case FF_PROFILE_H264_BASELINE:
+        case AV_PROFILE_H264_BASELINE:
             x4->profile = "baseline";
             break;
-        case FF_PROFILE_H264_HIGH:
+        case AV_PROFILE_H264_HIGH:
             x4->profile = "high";
             break;
-        case FF_PROFILE_H264_HIGH_10:
+        case AV_PROFILE_H264_HIGH_10:
             x4->profile = "high10";
             break;
-        case FF_PROFILE_H264_HIGH_422:
+        case AV_PROFILE_H264_HIGH_422:
             x4->profile = "high422";
             break;
-        case FF_PROFILE_H264_HIGH_444:
+        case AV_PROFILE_H264_HIGH_444:
             x4->profile = "high444";
             break;
-        case FF_PROFILE_H264_MAIN:
+        case AV_PROFILE_H264_MAIN:
             x4->profile = "main";
             break;
         default:
@@ -1190,7 +1190,6 @@ FF_ENABLE_DEPRECATION_WARNINGS
     }
 
     x4->params.analyse.b_mb_info = x4->mb_info;
-    x4->params.analyse.b_fast_pskip = 1;
 
     // update AVCodecContext with x264 parameters
     avctx->has_b_frames = x4->params.i_bframe ?
@@ -1231,7 +1230,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
         avctx->extradata_size = p - avctx->extradata;
     }
 
-    cpb_props = ff_add_cpb_side_data(avctx);
+    cpb_props = ff_encode_add_cpb_side_data(avctx);
     if (!cpb_props)
         return AVERROR(ENOMEM);
     cpb_props->buffer_size = x4->params.rc.i_vbv_buffer_size * 1000;
