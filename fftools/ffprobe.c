@@ -140,7 +140,7 @@ static int show_private_data            = 1;
 #define SHOW_OPTIONAL_FIELDS_ALWAYS      1
 static int show_optional_fields = SHOW_OPTIONAL_FIELDS_AUTO;
 
-static char *print_format;
+static char *output_format;
 static char *stream_specifier;
 static char *show_data_hash;
 
@@ -253,7 +253,7 @@ static struct section sections[] = {
     [SECTION_ID_FRAME] =              { SECTION_ID_FRAME, "frame", 0, { SECTION_ID_FRAME_TAGS, SECTION_ID_FRAME_SIDE_DATA_LIST, SECTION_ID_FRAME_LOGS, -1 } },
     [SECTION_ID_FRAME_TAGS] =         { SECTION_ID_FRAME_TAGS, "tags", SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "frame_tags" },
     [SECTION_ID_FRAME_SIDE_DATA_LIST] ={ SECTION_ID_FRAME_SIDE_DATA_LIST, "side_data_list", SECTION_FLAG_IS_ARRAY, { SECTION_ID_FRAME_SIDE_DATA, -1 }, .element_name = "side_data", .unique_name = "frame_side_data_list" },
-    [SECTION_ID_FRAME_SIDE_DATA] =     { SECTION_ID_FRAME_SIDE_DATA, "side_data", SECTION_FLAG_HAS_VARIABLE_FIELDS|SECTION_FLAG_HAS_TYPE, { SECTION_ID_FRAME_SIDE_DATA_TIMECODE_LIST, SECTION_ID_FRAME_SIDE_DATA_COMPONENT_LIST, -1 }, .unique_name = "frame_side_data", .get_type = get_frame_side_data_type },
+    [SECTION_ID_FRAME_SIDE_DATA] =     { SECTION_ID_FRAME_SIDE_DATA, "side_data", SECTION_FLAG_HAS_VARIABLE_FIELDS|SECTION_FLAG_HAS_TYPE, { SECTION_ID_FRAME_SIDE_DATA_TIMECODE_LIST, SECTION_ID_FRAME_SIDE_DATA_COMPONENT_LIST, -1 }, .unique_name = "frame_side_data", .element_name = "side_datum", .get_type = get_frame_side_data_type },
     [SECTION_ID_FRAME_SIDE_DATA_TIMECODE_LIST] =  { SECTION_ID_FRAME_SIDE_DATA_TIMECODE_LIST, "timecodes", SECTION_FLAG_IS_ARRAY, { SECTION_ID_FRAME_SIDE_DATA_TIMECODE, -1 } },
     [SECTION_ID_FRAME_SIDE_DATA_TIMECODE] =       { SECTION_ID_FRAME_SIDE_DATA_TIMECODE, "timecode", 0, { -1 } },
     [SECTION_ID_FRAME_SIDE_DATA_COMPONENT_LIST] = { SECTION_ID_FRAME_SIDE_DATA_COMPONENT_LIST, "components", SECTION_FLAG_IS_ARRAY, { SECTION_ID_FRAME_SIDE_DATA_COMPONENT, -1 } },
@@ -269,7 +269,7 @@ static struct section sections[] = {
     [SECTION_ID_PACKET] =             { SECTION_ID_PACKET, "packet", 0, { SECTION_ID_PACKET_TAGS, SECTION_ID_PACKET_SIDE_DATA_LIST, -1 } },
     [SECTION_ID_PACKET_TAGS] =        { SECTION_ID_PACKET_TAGS, "tags", SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "packet_tags" },
     [SECTION_ID_PACKET_SIDE_DATA_LIST] ={ SECTION_ID_PACKET_SIDE_DATA_LIST, "side_data_list", SECTION_FLAG_IS_ARRAY, { SECTION_ID_PACKET_SIDE_DATA, -1 }, .element_name = "side_data", .unique_name = "packet_side_data_list" },
-    [SECTION_ID_PACKET_SIDE_DATA] =     { SECTION_ID_PACKET_SIDE_DATA, "side_data", SECTION_FLAG_HAS_VARIABLE_FIELDS|SECTION_FLAG_HAS_TYPE, { -1 }, .unique_name = "packet_side_data", .get_type = get_packet_side_data_type },
+    [SECTION_ID_PACKET_SIDE_DATA] =     { SECTION_ID_PACKET_SIDE_DATA, "side_data", SECTION_FLAG_HAS_VARIABLE_FIELDS|SECTION_FLAG_HAS_TYPE, { -1 }, .unique_name = "packet_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
     [SECTION_ID_PIXEL_FORMATS] =      { SECTION_ID_PIXEL_FORMATS, "pixel_formats", SECTION_FLAG_IS_ARRAY, { SECTION_ID_PIXEL_FORMAT, -1 } },
     [SECTION_ID_PIXEL_FORMAT] =       { SECTION_ID_PIXEL_FORMAT, "pixel_format", 0, { SECTION_ID_PIXEL_FORMAT_FLAGS, SECTION_ID_PIXEL_FORMAT_COMPONENTS, -1 } },
     [SECTION_ID_PIXEL_FORMAT_FLAGS] = { SECTION_ID_PIXEL_FORMAT_FLAGS, "flags", 0, { -1 }, .unique_name = "pixel_format_flags" },
@@ -292,7 +292,7 @@ static struct section sections[] = {
     [SECTION_ID_STREAM_DISPOSITION] = { SECTION_ID_STREAM_DISPOSITION, "disposition", 0, { -1 }, .unique_name = "stream_disposition" },
     [SECTION_ID_STREAM_TAGS] =        { SECTION_ID_STREAM_TAGS, "tags", SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .element_name = "tag", .unique_name = "stream_tags" },
     [SECTION_ID_STREAM_SIDE_DATA_LIST] ={ SECTION_ID_STREAM_SIDE_DATA_LIST, "side_data_list", SECTION_FLAG_IS_ARRAY, { SECTION_ID_STREAM_SIDE_DATA, -1 }, .element_name = "side_data", .unique_name = "stream_side_data_list" },
-    [SECTION_ID_STREAM_SIDE_DATA] =     { SECTION_ID_STREAM_SIDE_DATA, "side_data", SECTION_FLAG_HAS_TYPE|SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .unique_name = "stream_side_data", .get_type = get_packet_side_data_type },
+    [SECTION_ID_STREAM_SIDE_DATA] =     { SECTION_ID_STREAM_SIDE_DATA, "side_data", SECTION_FLAG_HAS_TYPE|SECTION_FLAG_HAS_VARIABLE_FIELDS, { -1 }, .unique_name = "stream_side_data", .element_name = "side_datum", .get_type = get_packet_side_data_type },
     [SECTION_ID_SUBTITLE] =           { SECTION_ID_SUBTITLE, "subtitle", 0, { -1 } },
 };
 
@@ -1818,20 +1818,26 @@ static void xml_print_section_header(WriterContext *wctx, void *data)
         xml->within_tag = 0;
         writer_put_str(wctx, ">\n");
     }
-    if (section->flags & SECTION_FLAG_HAS_VARIABLE_FIELDS) {
-        xml->indent_level++;
-    } else {
-        if (parent_section && (parent_section->flags & SECTION_FLAG_IS_WRAPPER) &&
-            wctx->level && wctx->nb_item[wctx->level-1])
-            writer_w8(wctx, '\n');
-        xml->indent_level++;
 
-        if (section->flags & SECTION_FLAG_IS_ARRAY) {
-            XML_INDENT(); writer_printf(wctx, "<%s>\n", section->name);
-        } else {
-            XML_INDENT(); writer_printf(wctx, "<%s ", section->name);
-            xml->within_tag = 1;
+    if (parent_section && (parent_section->flags & SECTION_FLAG_IS_WRAPPER) &&
+        wctx->level && wctx->nb_item[wctx->level-1])
+        writer_w8(wctx, '\n');
+    xml->indent_level++;
+
+    if (section->flags & (SECTION_FLAG_IS_ARRAY|SECTION_FLAG_HAS_VARIABLE_FIELDS)) {
+        XML_INDENT(); writer_printf(wctx, "<%s", section->name);
+
+        if (section->flags & SECTION_FLAG_HAS_TYPE) {
+            AVBPrint buf;
+            av_bprint_init(&buf, 1, AV_BPRINT_SIZE_UNLIMITED);
+            av_bprint_escape(&buf, section->get_type(data), NULL,
+                             AV_ESCAPE_MODE_XML, AV_ESCAPE_FLAG_XML_DOUBLE_QUOTES);
+            writer_printf(wctx, " type=\"%s\"", buf.str);
         }
+        writer_printf(wctx, ">\n", section->name);
+    } else {
+        XML_INDENT(); writer_printf(wctx, "<%s ", section->name);
+        xml->within_tag = 1;
     }
 }
 
@@ -1846,15 +1852,13 @@ static void xml_print_section_footer(WriterContext *wctx)
         xml->within_tag = 0;
         writer_put_str(wctx, "/>\n");
         xml->indent_level--;
-    } else if (section->flags & SECTION_FLAG_HAS_VARIABLE_FIELDS) {
-        xml->indent_level--;
     } else {
         XML_INDENT(); writer_printf(wctx, "</%s>\n", section->name);
         xml->indent_level--;
     }
 }
 
-static void xml_print_str(WriterContext *wctx, const char *key, const char *value)
+static void xml_print_value(WriterContext *wctx, const char *key, const void *value, const int is_int)
 {
     AVBPrint buf;
     XMLContext *xml = wctx->priv;
@@ -1863,6 +1867,7 @@ static void xml_print_str(WriterContext *wctx, const char *key, const char *valu
     av_bprint_init(&buf, 1, AV_BPRINT_SIZE_UNLIMITED);
 
     if (section->flags & SECTION_FLAG_HAS_VARIABLE_FIELDS) {
+        xml->indent_level++;
         XML_INDENT();
         av_bprint_escape(&buf, key, NULL,
                          AV_ESCAPE_MODE_XML, AV_ESCAPE_FLAG_XML_DOUBLE_QUOTES);
@@ -1870,26 +1875,36 @@ static void xml_print_str(WriterContext *wctx, const char *key, const char *valu
                       section->element_name, buf.str);
         av_bprint_clear(&buf);
 
-        av_bprint_escape(&buf, value, NULL,
-                         AV_ESCAPE_MODE_XML, AV_ESCAPE_FLAG_XML_DOUBLE_QUOTES);
-        writer_printf(wctx, " value=\"%s\"/>\n", buf.str);
+        if (is_int) {
+            writer_printf(wctx, " value=\"%lld\"/>\n", *(long long int *)value);
+        } else {
+            av_bprint_escape(&buf, (const char *)value, NULL,
+                             AV_ESCAPE_MODE_XML, AV_ESCAPE_FLAG_XML_DOUBLE_QUOTES);
+            writer_printf(wctx, " value=\"%s\"/>\n", buf.str);
+        }
+        xml->indent_level--;
     } else {
         if (wctx->nb_item[wctx->level])
             writer_w8(wctx, ' ');
 
-        av_bprint_escape(&buf, value, NULL,
-                         AV_ESCAPE_MODE_XML, AV_ESCAPE_FLAG_XML_DOUBLE_QUOTES);
-        writer_printf(wctx, "%s=\"%s\"", key, buf.str);
+        if (is_int) {
+            writer_printf(wctx, "%s=\"%lld\"", key, *(long long int *)value);
+        } else {
+            av_bprint_escape(&buf, (const char *)value, NULL,
+                             AV_ESCAPE_MODE_XML, AV_ESCAPE_FLAG_XML_DOUBLE_QUOTES);
+            writer_printf(wctx, "%s=\"%s\"", key, buf.str);
+        }
     }
 
     av_bprint_finalize(&buf, NULL);
 }
 
-static void xml_print_int(WriterContext *wctx, const char *key, long long int value)
-{
-    if (wctx->nb_item[wctx->level])
-        writer_w8(wctx, ' ');
-    writer_printf(wctx, "%s=\"%lld\"", key, value);
+static inline void xml_print_str(WriterContext *wctx, const char *key, const char *value) {
+    xml_print_value(wctx, key, (const void *)value, 0);
+}
+
+static inline void xml_print_int(WriterContext *wctx, const char *key, long long int value) {
+    xml_print_value(wctx, key, (const void *)&value, 1);
 }
 
 static Writer xml_writer = {
@@ -4071,9 +4086,10 @@ static const OptionDef real_options[] = {
       "use sexagesimal format HOURS:MM:SS.MICROSECONDS for time units" },
     { "pretty", 0, {.func_arg = opt_pretty},
       "prettify the format of displayed values, make it more human readable" },
-    { "print_format", OPT_STRING | HAS_ARG, { &print_format },
+    { "output_format", OPT_STRING | HAS_ARG, { &output_format },
       "set the output printing format (available formats are: default, compact, csv, flat, ini, json, xml)", "format" },
-    { "of", OPT_STRING | HAS_ARG, { &print_format }, "alias for -print_format", "format" },
+    { "print_format", OPT_STRING | HAS_ARG, { &output_format }, "alias for -output_format (deprecated)" },
+    { "of", OPT_STRING | HAS_ARG, { &output_format }, "alias for -output_format", "format" },
     { "select_streams", OPT_STRING | HAS_ARG, { &stream_specifier }, "select the specified streams", "stream_specifier" },
     { "sections", OPT_EXIT, {.func_arg = opt_sections}, "print sections structure and section information, and exit" },
     { "show_data",    OPT_BOOL, { &do_show_data }, "show packets data" },
@@ -4194,13 +4210,13 @@ int main(int argc, char **argv)
 
     writer_register_all();
 
-    if (!print_format)
-        print_format = av_strdup("default");
-    if (!print_format) {
+    if (!output_format)
+        output_format = av_strdup("default");
+    if (!output_format) {
         ret = AVERROR(ENOMEM);
         goto end;
     }
-    w_name = av_strtok(print_format, "=", &buf);
+    w_name = av_strtok(output_format, "=", &buf);
     if (!w_name) {
         av_log(NULL, AV_LOG_ERROR,
                "No name specified for the output format\n");
@@ -4269,7 +4285,7 @@ int main(int argc, char **argv)
     }
 
 end:
-    av_freep(&print_format);
+    av_freep(&output_format);
     av_freep(&read_intervals);
     av_hash_freep(&hash);
 
