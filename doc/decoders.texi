@@ -391,7 +391,7 @@ Specifies the encoding scheme of input subtitle text.
 
 @table @samp
 @item auto
-Automatically detect text encoding.
+Automatically detect text encoding (default).
 @item jis
 8bit-char JIS encoding defined in ARIB STD B24.
 This encoding used in Japan for ISDB captions.
@@ -402,9 +402,6 @@ This encoding is used in Philippines for ISDB-T captions.
 Latin character encoding defined in ABNT NBR 15606-1.
 This encoding is used in South America for SBTVD / ISDB-Tb captions.
 @end table
-
-The default is @dfn{ass} as same as @dfn{libaribb24} decoder.
-Some present players (e.g., @dfn{mpv}) expect ASS format for ARIB caption.
 
 @item -font @var{font_name[,font_name2,...]}
 Specify comma-separated list of font family names to be used for @dfn{bitmap}
@@ -426,12 +423,6 @@ The default is @var{false}.
 If your player cannot handle AVSubtitles with multiple ASS rectangles properly,
 set this option to @var{true} or define @env{ASS_SINGLE_RECT=1} to change
 default behavior at compilation.
-
-@item -replace_fullwidth_ascii @var{boolean}
-Specify whether to replace MSZ (Middle Size, half width) fullwidth
-alphanumerics with halfwidth alphanumerics.
-
-The default is @var{true}.
 
 @item -force_outline_text @var{boolean}
 Specify whether always render outline text for all characters regardless of
@@ -456,6 +447,28 @@ The default is @var{false}.
 
 @item -replace_drcs @var{boolean}
 Specify whether to render replaced DRCS characters as Unicode characters.
+
+The default is @var{true}.
+
+@item -replace_msz_ascii @var{boolean}
+Specify whether to replace MSZ (Middle Size; half width) fullwidth
+alphanumerics with halfwidth alphanumerics.
+
+The default is @var{true}.
+
+@item -replace_msz_japanese @var{boolean}
+Specify whether to replace some MSZ (Middle Size; half width) fullwidth
+japanese special characters with halfwidth ones.
+
+The default is @var{true}.
+
+@item -replace_msz_glyph @var{boolean}
+Specify whether to replace MSZ (Middle Size; half width) characters
+with halfwidth glyphs if the fonts supports it.
+This option works under FreeType or DirectWrite renderer
+with Adobe-Japan1 compliant fonts.
+e.g., IBM Plex Sans JP, Morisawa BIZ UDGothic, Morisawa BIZ UDMincho,
+Yu Gothic, Yu Mincho, and Meiryo.
 
 The default is @var{true}.
 

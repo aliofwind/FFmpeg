@@ -2202,7 +2202,6 @@ HAVE_LIST_PUB="
 
 HEADERS_LIST="
     arpa_inet_h
-    asm_hwcap_h
     asm_types_h
     cdio_paranoia_h
     cdio_paranoia_paranoia_h
@@ -2888,6 +2887,7 @@ ipu_decoder_select="mpegvideodec"
 jpegls_decoder_select="mjpeg_decoder"
 jv_decoder_select="blockdsp"
 lagarith_decoder_select="llviddsp"
+lead_decoder_select="idctdsp jpegtables"
 ljpeg_encoder_select="jpegtables"
 lscr_decoder_select="inflate_wrapper"
 magicyuv_decoder_select="llviddsp"
@@ -5985,7 +5985,7 @@ for restrict_keyword in restrict __restrict__ __restrict ""; do
     test_code cc "" "char * $restrict_keyword p" && break
 done
 
-check_cc pragma_deprecated "" '_Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")'
+check_cc pragma_deprecated "" '_Pragma("GCC diagnostic push") _Pragma("GCC diagnostic ignored \"-Wdeprecated-declarations\"")'
 
 # The global variable ensures the bits appear unchanged in the object file.
 test_cc <<EOF || die "endian test failed"
@@ -6046,7 +6046,26 @@ check_inline_asm inline_asm_nonlocal_labels '"Label:\n"'
 if enabled aarch64; then
     as_arch_level="armv8-a"
     check_as as_arch_directive ".arch $as_arch_level"
-    enabled as_arch_directive && check_arch_level armv8.2-a
+    if enabled as_arch_directive; then
+        # Check for higher .arch levels. We only need armv8.2-a in order to
+        # enable the extensions we want below - we primarily want to control
+        # them via .arch_extension. However:
+        #
+        # Clang before version 17 (Xcode versions up to and including 15.0)
+        # didn't support controlling the dotprod/i8mm extensions via
+        # .arch_extension; thus try to enable them via the .arch level as well.
+        for level in armv8.2-a armv8.4-a armv8.6-a; do
+            check_arch_level $level
+        done
+        # Clang before version 17 (Xcode versions up to and including 15.0)
+        # also had a bug (https://github.com/llvm/llvm-project/issues/32220)
+        # causing a plain ".arch <level>" to not have any effect unless it
+        # had an extra "+<feature>" included - but it was activate on the next
+        # ".arch_extension" directive. Check if we can include "+crc" as dummy
+        # feature to make the .arch directive behave as expected and take
+        # effect right away.
+        check_arch_level "${as_arch_level}+crc"
+    fi
 
     enabled armv8 && check_insn armv8 'prfm   pldl1strm, [x0]'
     # internal assembler in clang 3.3 does not support this instruction
@@ -6453,7 +6472,6 @@ check_headers io.h
 enabled libdrm &&
     check_headers linux/dma-buf.h
 
-check_headers asm/hwcap.h
 check_headers linux/perf_event.h
 check_headers libcrystalhd/libcrystalhd_if.h
 check_headers malloc.h
@@ -6679,7 +6697,7 @@ enabled libaom            && require_pkg_config libaom "aom >= 1.0.0" aom/aom_co
 enabled libaribb24        && { check_pkg_config libaribb24 "aribb24 > 1.0.3" "aribb24/aribb24.h" arib_instance_new ||
                                { enabled gpl && require_pkg_config libaribb24 aribb24 "aribb24/aribb24.h" arib_instance_new; } ||
                                die "ERROR: libaribb24 requires version higher than 1.0.3 or --enable-gpl."; }
-enabled libaribcaption    && require_pkg_config libaribcaption "libaribcaption >= 0.1.0" "aribcaption/aribcaption.h" aribcc_context_alloc
+enabled libaribcaption    && require_pkg_config libaribcaption "libaribcaption >= 1.1.1" "aribcaption/aribcaption.h" aribcc_context_alloc
 enabled lv2               && require_pkg_config lv2 lilv-0 "lilv/lilv.h" lilv_world_new
 enabled libiec61883       && require libiec61883 libiec61883/iec61883.h iec61883_cmp_connect -lraw1394 -lavc1394 -lrom1394 -liec61883
 enabled libass            && require_pkg_config libass "libass >= 0.11.0" ass/ass.h ass_library_init
@@ -7505,6 +7523,12 @@ check_deps $CONFIG_LIST       \
            $ALL_COMPONENTS    \
 
 enabled threads && ! enabled pthreads && ! enabled atomics_native && die "non pthread threading without atomics not supported, try adding --enable-pthreads or --cpu=i486 or higher if you are on x86"
+
+enabled threads || warn \
+    "Threading support was disabled or is not available on the target platform." \
+    "This means that not only is this build not multi-threaded, but also"    \
+    "that the libraries from this build MUST NOT be used in a multi-threaded"\
+    "environment."
 
 case $target_os in
 haiku)

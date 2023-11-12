@@ -23,6 +23,31 @@
 #include "audio.h"
 #include "formats.h"
 
+enum FilterModes {
+    LISTEN = -1,
+    CUT_BELOW,
+    CUT_ABOVE,
+    BOOST_BELOW,
+    BOOST_ABOVE,
+    NB_MODES,
+};
+
+typedef struct ChannelContext {
+    double fa_double[3], fm_double[3];
+    double dstate_double[2];
+    double fstate_double[2];
+    double tstate_double[2];
+    double gain_double;
+    double threshold_double;
+    float fa_float[3], fm_float[3];
+    float dstate_float[2];
+    float fstate_float[2];
+    float tstate_float[2];
+    float gain_float;
+    float threshold_float;
+    int init;
+} ChannelContext;
+
 typedef struct AudioDynamicEqualizerContext {
     const AVClass *class;
 
@@ -39,7 +64,6 @@ typedef struct AudioDynamicEqualizerContext {
     double attack_coef;
     double release_coef;
     int mode;
-    int direction;
     int detection;
     int tftype;
     int dftype;
@@ -52,7 +76,7 @@ typedef struct AudioDynamicEqualizerContext {
     double da_double[3], dm_double[3];
     float da_float[3], dm_float[3];
 
-    AVFrame *state;
+    ChannelContext *cc;
 } AudioDynamicEqualizerContext;
 
 static int query_formats(AVFilterContext *ctx)
@@ -96,8 +120,8 @@ static int config_input(AVFilterLink *inlink)
     AudioDynamicEqualizerContext *s = ctx->priv;
 
     s->format = inlink->format;
-    s->state = ff_get_audio_buffer(inlink, 16);
-    if (!s->state)
+    s->cc = av_calloc(inlink->ch_layout.nb_channels, sizeof(*s->cc));
+    if (!s->cc)
         return AVERROR(ENOMEM);
 
     switch (s->format) {
@@ -109,6 +133,12 @@ static int config_input(AVFilterLink *inlink)
         s->filter_prepare  = filter_prepare_float;
         s->filter_channels = filter_channels_float;
         break;
+    }
+
+    for (int ch = 0; ch < inlink->ch_layout.nb_channels; ch++) {
+        ChannelContext *cc = &s->cc[ch];
+        cc->gain_float = 1.f;
+        cc->gain_double = 1.0;
     }
 
     return 0;
@@ -148,7 +178,7 @@ static av_cold void uninit(AVFilterContext *ctx)
 {
     AudioDynamicEqualizerContext *s = ctx->priv;
 
-    av_frame_free(&s->state);
+    av_freep(&s->cc);
 }
 
 #define OFFSET(x) offsetof(AudioDynamicEqualizerContext, x)
@@ -166,10 +196,12 @@ static const AVOption adynamicequalizer_options[] = {
     { "ratio",      "set ratio factor",        OFFSET(ratio),      AV_OPT_TYPE_DOUBLE, {.dbl=1},        0, 30,      FLAGS },
     { "makeup",     "set makeup gain",         OFFSET(makeup),     AV_OPT_TYPE_DOUBLE, {.dbl=0},        0, 100,     FLAGS },
     { "range",      "set max gain",            OFFSET(range),      AV_OPT_TYPE_DOUBLE, {.dbl=50},       1, 200,     FLAGS },
-    { "mode",       "set mode",                OFFSET(mode),       AV_OPT_TYPE_INT,    {.i64=0},       -1, 1,       FLAGS, "mode" },
-    {   "listen",   0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=-1},       0, 0,       FLAGS, "mode" },
-    {   "cut",      0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=0},        0, 0,       FLAGS, "mode" },
-    {   "boost",    0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=1},        0, 0,       FLAGS, "mode" },
+    { "mode",       "set mode",                OFFSET(mode),       AV_OPT_TYPE_INT,    {.i64=0},  LISTEN,NB_MODES-1,FLAGS, "mode" },
+    {   "listen",   0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=LISTEN},   0, 0,       FLAGS, "mode" },
+    {   "cutbelow", 0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=CUT_BELOW},0, 0,       FLAGS, "mode" },
+    {   "cutabove", 0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=CUT_ABOVE},0, 0,       FLAGS, "mode" },
+    { "boostbelow", 0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=BOOST_BELOW},0, 0,     FLAGS, "mode" },
+    { "boostabove", 0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=BOOST_ABOVE},0, 0,     FLAGS, "mode" },
     { "dftype",     "set detection filter type",OFFSET(dftype),    AV_OPT_TYPE_INT,    {.i64=0},        0, 3,       FLAGS, "dftype" },
     {   "bandpass", 0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=0},        0, 0,       FLAGS, "dftype" },
     {   "lowpass",  0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=1},        0, 0,       FLAGS, "dftype" },
@@ -179,9 +211,6 @@ static const AVOption adynamicequalizer_options[] = {
     {   "bell",     0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=0},        0, 0,       FLAGS, "tftype" },
     {   "lowshelf", 0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=1},        0, 0,       FLAGS, "tftype" },
     {   "highshelf",0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=2},        0, 0,       FLAGS, "tftype" },
-    { "direction",  "set direction",           OFFSET(direction),  AV_OPT_TYPE_INT,    {.i64=0},        0, 1,       FLAGS, "direction" },
-    {   "downward", 0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=0},        0, 0,       FLAGS, "direction" },
-    {   "upward",   0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=1},        0, 0,       FLAGS, "direction" },
     { "auto",       "set auto threshold",      OFFSET(detection),  AV_OPT_TYPE_INT,    {.i64=-1},      -1, 1,       FLAGS, "auto" },
     {   "disabled", 0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=-1},       0, 0,       FLAGS, "auto" },
     {   "off",      0,                         0,                  AV_OPT_TYPE_CONST,  {.i64=0},        0, 0,       FLAGS, "auto" },

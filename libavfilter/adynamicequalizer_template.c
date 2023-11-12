@@ -149,6 +149,8 @@ static int fn(filter_channels)(AVFilterContext *ctx, void *arg, int jobnr, int n
     const ftype ratio = s->ratio;
     const ftype range = s->range;
     const ftype tfrequency = FMIN(s->tfrequency, sample_rate * 0.5);
+    const int mode = s->mode;
+    const int power = (mode == CUT_BELOW || mode == CUT_ABOVE) ? -1 : 1;
     const ftype release = s->release_coef;
     const ftype attack = s->attack_coef;
     const ftype tqfactor = s->tqfactor;
@@ -156,61 +158,77 @@ static int fn(filter_channels)(AVFilterContext *ctx, void *arg, int jobnr, int n
     const ftype fg = TAN(M_PI * tfrequency / sample_rate);
     const int start = (in->ch_layout.nb_channels * jobnr) / nb_jobs;
     const int end = (in->ch_layout.nb_channels * (jobnr+1)) / nb_jobs;
+    const int is_disabled = ctx->is_disabled;
     const int detection = s->detection;
-    const int direction = s->direction;
     const int tftype = s->tftype;
-    const int mode = s->mode;
     const ftype *da = fn(s->da);
     const ftype *dm = fn(s->dm);
+
+    if (detection > 0) {
+        for (int ch = start; ch < end; ch++) {
+            const ftype *src = (const ftype *)in->extended_data[ch];
+            ChannelContext *cc = &s->cc[ch];
+            ftype *tstate = fn(cc->tstate);
+
+            for (int n = 0; n < in->nb_samples; n++) {
+                ftype detect = fn(get_svf)(src[n], dm, da, tstate);
+                fn(cc->threshold) = FMAX(fn(cc->threshold), detect);
+            }
+        }
+    } else if (detection < 0) {
+        for (int ch = start; ch < end; ch++) {
+            ChannelContext *cc = &s->cc[ch];
+            fn(cc->threshold) = s->threshold;
+        }
+    }
 
     for (int ch = start; ch < end; ch++) {
         const ftype *src = (const ftype *)in->extended_data[ch];
         ftype *dst = (ftype *)out->extended_data[ch];
-        ftype *state = (ftype *)s->state->extended_data[ch];
-        const ftype threshold = detection == 0 ? state[5] : s->threshold;
-        ftype fa[3], fm[3];
-
-        if (detection < 0)
-            state[5] = threshold;
-
-        memcpy(fa, state +  8, sizeof(fa));
-        memcpy(fm, state + 11, sizeof(fm));
+        ChannelContext *cc = &s->cc[ch];
+        const ftype threshold = fn(cc->threshold);
+        ftype *fa = fn(cc->fa), *fm = fn(cc->fm);
+        ftype *fstate = fn(cc->fstate);
+        ftype *dstate = fn(cc->dstate);
+        ftype gain = fn(cc->gain);
+        const int init = cc->init;
 
         for (int n = 0; n < out->nb_samples; n++) {
-            ftype detect, gain, v, listen;
+            ftype detect, v, listen, new_gain = ONE;
             ftype k, g;
 
-            detect = listen = fn(get_svf)(src[n], dm, da, state);
+            detect = listen = fn(get_svf)(src[n], dm, da, dstate);
             detect = FABS(detect);
 
-            if (detection > 0)
-                state[5] = FMAX(state[5], detect);
-
-            if (mode >= 0) {
-                if (direction == 0 && detect < threshold) {
-                    detect = CLIP(ONE + makeup + (threshold - detect) * ratio, ONE, range);
-                    if (!mode)
-                        detect = ONE / detect;
-                } else if (direction == 1 && detect > threshold) {
-                    detect = CLIP(ONE + makeup + (detect - threshold) * ratio, ONE, range);
-                    if (!mode)
-                        detect = ONE / detect;
-                } else {
-                    detect = ONE;
-                }
-
-                {
-                    ftype delta = detect - state[4];
-
-                    if (delta > EPSILON)
-                        detect = state[4] + attack * delta;
-                    else if (delta < -EPSILON)
-                        detect = state[4] + release * delta;
-                }
+            switch (mode) {
+            case LISTEN:
+                break;
+            case CUT_BELOW:
+            case BOOST_BELOW:
+                if (detect < threshold)
+                    new_gain = CLIP(ONE + makeup + (threshold - detect) * ratio, ONE, range);
+                break;
+            case CUT_ABOVE:
+            case BOOST_ABOVE:
+                if (detect > threshold)
+                    new_gain = CLIP(ONE + makeup + (detect - threshold) * ratio, ONE, range);
+                break;
             }
 
-            if (state[4] != detect) {
-                state[4] = gain = detect;
+            if (power < 0)
+                new_gain = ONE / new_gain;
+
+            if (mode > LISTEN) {
+                ftype delta = new_gain - gain;
+
+                if (delta > EPSILON)
+                    new_gain = gain + attack * delta;
+                else if (delta < -EPSILON)
+                    new_gain = gain + release * delta;
+            }
+
+            if (gain != new_gain || !init) {
+                gain = new_gain;
 
                 switch (tftype) {
                 case 0:
@@ -251,13 +269,13 @@ static int fn(filter_channels)(AVFilterContext *ctx, void *arg, int jobnr, int n
                 }
             }
 
-            v = fn(get_svf)(src[n], fm, fa, &state[2]);
+            v = fn(get_svf)(src[n], fm, fa, fstate);
             v = mode == -1 ? listen : v;
-            dst[n] = ctx->is_disabled ? src[n] : v;
+            dst[n] = is_disabled ? src[n] : v;
         }
 
-        memcpy(state +  8, fa, sizeof(fa));
-        memcpy(state + 11, fm, sizeof(fm));
+        fn(cc->gain) = gain;
+        cc->init = 1;
     }
 
     return 0;

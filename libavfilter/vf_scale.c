@@ -139,8 +139,8 @@ typedef struct ScaleContext {
 
     char *flags_str;
 
-    char *in_color_matrix;
-    char *out_color_matrix;
+    int in_color_matrix;
+    int out_color_matrix;
 
     int in_range;
     int in_frame_range;
@@ -410,30 +410,6 @@ static int query_formats(AVFilterContext *ctx)
     return 0;
 }
 
-static const int *parse_yuv_type(const char *s, enum AVColorSpace colorspace)
-{
-    if (!s)
-        s = "bt601";
-
-    if (s && strstr(s, "bt709")) {
-        colorspace = AVCOL_SPC_BT709;
-    } else if (s && strstr(s, "fcc")) {
-        colorspace = AVCOL_SPC_FCC;
-    } else if (s && strstr(s, "smpte240m")) {
-        colorspace = AVCOL_SPC_SMPTE240M;
-    } else if (s && (strstr(s, "bt601") || strstr(s, "bt470") || strstr(s, "smpte170m"))) {
-        colorspace = AVCOL_SPC_BT470BG;
-    } else if (s && strstr(s, "bt2020")) {
-        colorspace = AVCOL_SPC_BT2020_NCL;
-    }
-
-    if (colorspace < 1 || colorspace > 10 || colorspace == 8) {
-        colorspace = AVCOL_SPC_BT470BG;
-    }
-
-    return sws_getCoefficients(colorspace);
-}
-
 static int scale_eval_dimensions(AVFilterContext *ctx)
 {
     ScaleContext *scale = ctx->priv;
@@ -554,7 +530,7 @@ static int config_props(AVFilterLink *outlink)
     scale->isws[0] = scale->isws[1] = scale->sws = NULL;
     if (inlink0->w == outlink->w &&
         inlink0->h == outlink->h &&
-        !scale->out_color_matrix &&
+        scale->out_color_matrix == AVCOL_SPC_UNSPECIFIED &&
         scale->in_range == scale->out_range &&
         inlink0->format == outlink->format)
         ;
@@ -823,25 +799,13 @@ scale:
     out->width  = outlink->w;
     out->height = outlink->h;
 
-    // Sanity checks:
-    //   1. If the output is RGB, set the matrix coefficients to RGB.
-    //   2. If the output is not RGB and we've got the RGB/XYZ (identity)
-    //      matrix configured, unset the matrix.
-    //   In theory these should be in swscale itself as the AVFrame
-    //   based API gets in, so that not every swscale API user has
-    //   to go through duplicating such sanity checks.
-    if (av_pix_fmt_desc_get(out->format)->flags & AV_PIX_FMT_FLAG_RGB)
-        out->colorspace = AVCOL_SPC_RGB;
-    else if (out->colorspace == AVCOL_SPC_RGB)
-        out->colorspace = AVCOL_SPC_UNSPECIFIED;
-
     if (scale->output_is_pal)
         avpriv_set_systematic_pal2((uint32_t*)out->data[1], outlink->format == AV_PIX_FMT_PAL8 ? AV_PIX_FMT_BGR8 : outlink->format);
 
     in_range = in->color_range;
 
-    if (   scale->in_color_matrix
-        || scale->out_color_matrix
+    if (   scale->in_color_matrix != AVCOL_SPC_UNSPECIFIED
+        || scale->out_color_matrix != AVCOL_SPC_UNSPECIFIED
         || scale-> in_range != AVCOL_RANGE_UNSPECIFIED
         || in_range != AVCOL_RANGE_UNSPECIFIED
         || scale->out_range != AVCOL_RANGE_UNSPECIFIED) {
@@ -852,11 +816,13 @@ scale:
                                  (int **)&table, &out_full,
                                  &brightness, &contrast, &saturation);
 
-        if (scale->in_color_matrix)
-            inv_table = parse_yuv_type(scale->in_color_matrix, in->colorspace);
-        if (scale->out_color_matrix)
-            table     = parse_yuv_type(scale->out_color_matrix, AVCOL_SPC_UNSPECIFIED);
-        else if (scale->in_color_matrix)
+        if (scale->in_color_matrix == -1 /* auto */)
+            inv_table = sws_getCoefficients(in->colorspace);
+        else if (scale->in_color_matrix != AVCOL_SPC_UNSPECIFIED)
+            inv_table = sws_getCoefficients(scale->in_color_matrix);
+        if (scale->out_color_matrix != AVCOL_SPC_UNSPECIFIED)
+            table     = sws_getCoefficients(scale->out_color_matrix);
+        else if (scale->in_color_matrix != AVCOL_SPC_UNSPECIFIED)
             table = inv_table;
 
         if (scale-> in_range != AVCOL_RANGE_UNSPECIFIED)
@@ -879,7 +845,21 @@ scale:
                                      brightness, contrast, saturation);
 
         out->color_range = out_full ? AVCOL_RANGE_JPEG : AVCOL_RANGE_MPEG;
+        if (scale->out_color_matrix != AVCOL_SPC_UNSPECIFIED)
+            out->colorspace = scale->out_color_matrix;
     }
+
+    // Sanity checks:
+    //   1. If the output is RGB, set the matrix coefficients to RGB.
+    //   2. If the output is not RGB and we've got the RGB/XYZ (identity)
+    //      matrix configured, unset the matrix.
+    //   In theory these should be in swscale itself as the AVFrame
+    //   based API gets in, so that not every swscale API user has
+    //   to go through duplicating such sanity checks.
+    if (av_pix_fmt_desc_get(out->format)->flags & AV_PIX_FMT_FLAG_RGB)
+        out->colorspace = AVCOL_SPC_RGB;
+    else if (out->colorspace == AVCOL_SPC_RGB)
+        out->colorspace = AVCOL_SPC_UNSPECIFIED;
 
     av_reduce(&out->sample_aspect_ratio.num, &out->sample_aspect_ratio.den,
               (int64_t)in->sample_aspect_ratio.num * outlink->h * link->w,
@@ -1003,16 +983,16 @@ static const AVOption scale_options[] = {
     { "interl", "set interlacing", OFFSET(interlaced), AV_OPT_TYPE_BOOL, {.i64 = 0 }, -1, 1, FLAGS },
     { "size",   "set video size",          OFFSET(size_str), AV_OPT_TYPE_STRING, {.str = NULL}, 0, FLAGS },
     { "s",      "set video size",          OFFSET(size_str), AV_OPT_TYPE_STRING, {.str = NULL}, 0, FLAGS },
-    {  "in_color_matrix", "set input YCbCr type",   OFFSET(in_color_matrix),  AV_OPT_TYPE_STRING, { .str = "auto" }, .flags = FLAGS, "color" },
-    { "out_color_matrix", "set output YCbCr type",  OFFSET(out_color_matrix), AV_OPT_TYPE_STRING, { .str = NULL }, .flags = FLAGS,  "color"},
-        { "auto",        NULL, 0, AV_OPT_TYPE_CONST, { .str = "auto" },      0, 0, FLAGS, "color" },
-        { "bt601",       NULL, 0, AV_OPT_TYPE_CONST, { .str = "bt601" },     0, 0, FLAGS, "color" },
-        { "bt470",       NULL, 0, AV_OPT_TYPE_CONST, { .str = "bt470" },     0, 0, FLAGS, "color" },
-        { "smpte170m",   NULL, 0, AV_OPT_TYPE_CONST, { .str = "smpte170m" }, 0, 0, FLAGS, "color" },
-        { "bt709",       NULL, 0, AV_OPT_TYPE_CONST, { .str = "bt709" },     0, 0, FLAGS, "color" },
-        { "fcc",         NULL, 0, AV_OPT_TYPE_CONST, { .str = "fcc" },       0, 0, FLAGS, "color" },
-        { "smpte240m",   NULL, 0, AV_OPT_TYPE_CONST, { .str = "smpte240m" }, 0, 0, FLAGS, "color" },
-        { "bt2020",      NULL, 0, AV_OPT_TYPE_CONST, { .str = "bt2020" },    0, 0, FLAGS, "color" },
+    {  "in_color_matrix", "set input YCbCr type",   OFFSET(in_color_matrix),  AV_OPT_TYPE_INT, { .i64 = -1 }, -1, AVCOL_SPC_NB-1, .flags = FLAGS, "color" },
+    { "out_color_matrix", "set output YCbCr type",  OFFSET(out_color_matrix), AV_OPT_TYPE_INT, { .i64 = AVCOL_SPC_UNSPECIFIED }, 0, AVCOL_SPC_NB-1, .flags = FLAGS, "color"},
+        { "auto",        NULL, 0, AV_OPT_TYPE_CONST, { .i64 = -1 },                     0, 0, FLAGS, "color" },
+        { "bt601",       NULL, 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_SPC_BT470BG },      0, 0, FLAGS, "color" },
+        { "bt470",       NULL, 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_SPC_BT470BG },      0, 0, FLAGS, "color" },
+        { "smpte170m",   NULL, 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_SPC_BT470BG },      0, 0, FLAGS, "color" },
+        { "bt709",       NULL, 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_SPC_BT709 },        0, 0, FLAGS, "color" },
+        { "fcc",         NULL, 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_SPC_FCC },          0, 0, FLAGS, "color" },
+        { "smpte240m",   NULL, 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_SPC_SMPTE240M },    0, 0, FLAGS, "color" },
+        { "bt2020",      NULL, 0, AV_OPT_TYPE_CONST, { .i64 = AVCOL_SPC_BT2020_NCL },   0, 0, FLAGS, "color" },
     {  "in_range", "set input color range",  OFFSET( in_range), AV_OPT_TYPE_INT, {.i64 = AVCOL_RANGE_UNSPECIFIED }, 0, 2, FLAGS, "range" },
     { "out_range", "set output color range", OFFSET(out_range), AV_OPT_TYPE_INT, {.i64 = AVCOL_RANGE_UNSPECIFIED }, 0, 2, FLAGS, "range" },
     { "auto",   NULL, 0, AV_OPT_TYPE_CONST, {.i64 = AVCOL_RANGE_UNSPECIFIED }, 0, 0, FLAGS, "range" },
