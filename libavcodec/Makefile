@@ -81,6 +81,7 @@ OBJS-$(CONFIG_CBS_H265)                += cbs_h2645.o cbs_sei.o h2645_parse.o
 OBJS-$(CONFIG_CBS_H266)                += cbs_h2645.o cbs_sei.o h2645_parse.o
 OBJS-$(CONFIG_CBS_JPEG)                += cbs_jpeg.o
 OBJS-$(CONFIG_CBS_MPEG2)               += cbs_mpeg2.o
+OBJS-$(CONFIG_CBS_VP8)                 += cbs_vp8.o vp8data.o
 OBJS-$(CONFIG_CBS_VP9)                 += cbs_vp9.o
 OBJS-$(CONFIG_CRYSTALHD)               += crystalhd.o
 OBJS-$(CONFIG_DEFLATE_WRAPPER)         += zlib_wrapper.o
@@ -1148,6 +1149,8 @@ OBJS-$(CONFIG_LIBX264_ENCODER)            += libx264.o
 OBJS-$(CONFIG_LIBX265_ENCODER)            += libx265.o
 OBJS-$(CONFIG_LIBXAVS_ENCODER)            += libxavs.o
 OBJS-$(CONFIG_LIBXAVS2_ENCODER)           += libxavs2.o
+OBJS-$(CONFIG_LIBXEVD_DECODER)            += libxevd.o
+OBJS-$(CONFIG_LIBXEVE_ENCODER)            += libxeve.o
 OBJS-$(CONFIG_LIBXVID_ENCODER)            += libxvid.o
 OBJS-$(CONFIG_LIBZVBI_TELETEXT_DECODER)   += libzvbi-teletextdec.o ass.o
 
