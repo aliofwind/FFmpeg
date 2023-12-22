@@ -5,6 +5,14 @@ version <next>:
 - LEAD MCMP decoder
 - EVC decoding using external library libxevd
 - EVC encoding using external library libxeve
+- QOA decoder and demuxer
+- aap filter
+- demuxing, decoding, filtering, encoding, and muxing in the
+  ffmpeg CLI now all run in parallel
+- enable gdigrab device to grab a window using the hwnd=HANDLER syntax
+- IAMF raw demuxer and muxer
+- D3D12VA hardware accelerated H264, HEVC, VP9, AV1, MPEG-2 and VC1 decoding
+- tiltandshift filter
 
 version 6.1:
 - libaribcaption decoder

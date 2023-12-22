@@ -29,6 +29,7 @@ typedef struct TAKDSPContext {
 } TAKDSPContext;
 
 void ff_takdsp_init(TAKDSPContext *c);
+void ff_takdsp_init_riscv(TAKDSPContext *c);
 void ff_takdsp_init_x86(TAKDSPContext *c);
 
 #endif /* AVCODEC_TAKDSP_H */

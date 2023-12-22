@@ -1222,8 +1222,12 @@ static int mov_read_ftyp(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     int ret = ffio_read_size(pb, type, 4);
     if (ret < 0)
         return ret;
-    if (c->fc->nb_streams)
-        return AVERROR_INVALIDDATA;
+    if (c->fc->nb_streams) {
+        if (c->fc->strict_std_compliance >= FF_COMPLIANCE_STRICT)
+            return AVERROR_INVALIDDATA;
+        av_log(c->fc, AV_LOG_DEBUG, "Ignoring duplicate FTYP\n");
+        return 0;
+    }
 
     if (strcmp(type, "qt  "))
         c->isom = 1;
@@ -9006,7 +9010,7 @@ static int mov_read_packet(AVFormatContext *s, AVPacket *pkt)
         pkt->flags |= AV_PKT_FLAG_DISCARD;
     }
     if (sc->ctts_data && sc->ctts_index < sc->ctts_count) {
-        pkt->pts = pkt->dts + sc->dts_shift + sc->ctts_data[sc->ctts_index].duration;
+        pkt->pts = av_sat_add64(pkt->dts, av_sat_add64(sc->dts_shift, sc->ctts_data[sc->ctts_index].duration));
         /* update ctts context */
         sc->ctts_sample++;
         if (sc->ctts_index < sc->ctts_count &&

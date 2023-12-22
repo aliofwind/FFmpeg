@@ -418,6 +418,63 @@ build.
 
 Below is a description of the currently available audio filters.
 
+@section aap
+Apply Affine Projection algorithm to the first audio stream using the second audio stream.
+
+This adaptive filter is used to estimate unknown audio based on multiple input audio samples.
+Affine projection algorithm can make trade-offs between computation complexity with convergence speed.
+
+A description of the accepted options follows.
+
+@table @option
+@item order
+Set the filter order.
+
+@item projection
+Set the projection order.
+
+@item mu
+Set the filter mu.
+
+@item delta
+Set the coefficient to initialize internal covariance matrix.
+
+@item out_mode
+Set the filter output samples. It accepts the following values:
+@table @option
+@item i
+Pass the 1st input.
+
+@item d
+Pass the 2nd input.
+
+@item o
+Pass difference between desired, 2nd input and error signal estimate.
+
+@item n
+Pass difference between input, 1st input and error signal estimate.
+
+@item e
+Pass error signal estimated samples.
+
+Default value is @var{o}.
+@end table
+
+@item precision
+Set which precision to use when processing samples.
+
+@table @option
+@item auto
+Auto pick internal sample format depending on other filters.
+
+@item float
+Always use single-floating point precision sample format.
+
+@item double
+Always use double-floating point precision sample format.
+@end table
+@end table
+
 @section acompressor
 
 A compressor is mainly used to reduce the dynamic range of a signal.
@@ -2687,6 +2744,20 @@ Pass error signal estimated samples.
 
 Default value is @var{o}.
 @end table
+
+@item precision
+Set which precision to use when processing samples.
+
+@table @option
+@item auto
+Auto pick internal sample format depending on other filters.
+
+@item float
+Always use single-floating point precision sample format.
+
+@item double
+Always use double-floating point precision sample format.
+@end table
 @end table
 
 @subsection Examples
@@ -3026,6 +3097,20 @@ Pass difference between input, 1st input and error signal estimate.
 Pass error signal estimated samples.
 
 Default value is @var{o}.
+@end table
+
+@item precision
+Set which precision to use when processing samples.
+
+@table @option
+@item auto
+Auto pick internal sample format depending on other filters.
+
+@item float
+Always use single-floating point precision sample format.
+
+@item double
+Always use double-floating point precision sample format.
 @end table
 @end table
 
@@ -16864,6 +16949,10 @@ Set the file path to be used to store log files.
 @item log_fmt
 Set the format of the log file (xml, json, csv, or sub).
 
+@item pool
+Set the pool method to be used for computing vmaf.
+Options are @code{min}, @code{harmonic_mean} or @code{mean} (default).
+
 @item n_threads
 Set number of threads to be used when initializing libvmaf.
 Default value: @code{0}, no threads.
@@ -23097,6 +23186,69 @@ tile=3x2:nb_frames=5:padding=7:margin=2
 @end example
 @end itemize
 
+@section tiltandshift
+
+What happens when you invert time and space?
+
+Normally a video is composed of several frames that represent a different
+instant of time and shows a scence that evolves in the space captured by the
+frame. This filter is the antipode of that concept, taking inspiration by
+tilt and shift photography.
+
+A filtered frame contains the whole timeline of events composing the sequence,
+and this is obtained by placing a slice of pixels from each frame into a single
+one. However, since there are no infinite-width frames, this is done up the
+width of the input frame, and a video is recomposed by shifting away one
+column for each subsequent frame. In order to map space to time, the filter
+tilts each input frame as well, so that motion is preseved. This is accomplished
+by progressively selecting a different column from each input frame.
+
+The end result is a sort of inverted parralax, so that far away objects move
+much faster that the ones in the front. The ideal conditions for this video
+effect are when there is either very little motion and the backgroud is static,
+or when there is a lot of motion and a very wide depth of field (eg. wide
+panorama, while moving on a train).
+
+The filter accepts the following parameters:
+
+@table @option
+
+@item tilt
+Tilt video while shifting (default). When unset, video will be sliding a
+static image, composed of the first column of each frame.
+
+@item start
+What to do at the start of filtering (see below).
+
+@item end
+What to do at the end of filtering (see below).
+
+@item hold
+How many columns should pass through before start of filtering.
+
+@item pad
+How many columns should be inserted before end of filtering.
+
+@end table
+
+Normally the filter shifts and tils from the very first frame, and stops when
+the last one is received. However, before filtering starts, normal video may
+be preseved, so that the effect is slowly shifted in its place. Similarly,
+the last video frame may be reconstructed at the end. Alternatively it is
+possible to just start and end with black.
+
+@table @samp
+@item none
+Filtering is starts immediately and ends when the last frame is received.
+
+@item frame
+The first frames or the very last frame are kept intact during processing.
+
+@item black
+Black is padded at the beginning or at the end of filtering.
+
+@end table
+
 @section tinterlace
 
 Perform various types of temporal field interlacing.
@@ -28167,7 +28319,12 @@ Only affects hardware cursors. If a game or application renders its own cursor,
 it'll always be captured.
 
 @item framerate
-Framerate at which the desktop will be captured.
+Maximum framerate at which the desktop will be captured - the interval between
+successive frames will not be smaller than the inverse of the framerate. When
+the desktop is not being updated often enough, the filter will duplicate
+a previous frame. Note that there is no background buffering going on, so when
+the filter is not polled often enough then the actual inter-frame interval may
+be significantly larger.
 
 Defaults to 30 FPS.
 
@@ -28260,9 +28417,22 @@ supposed to be generated forever.
 Set speed of gradients rotation.
 
 @item type, t
-Set type of gradients, can be @code{linear} or @code{radial} or @code{circular} or @code{spiral}.
+Set type of gradients.
+Available values are:
+@table @samp
+@item linear
+@item radial
+@item circular
+@item spiral
+@item square
 @end table
 
+Default type is @var{linear}.
+@end table
+
+@subsection Commands
+
+This source supports the some above options as @ref{commands}.
 
 @section mandelbrot
 

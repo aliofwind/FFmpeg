@@ -35,6 +35,7 @@ OBJS-$(CONFIG_DNN)                           += dnn_filter_common.o
 include $(SRC_PATH)/libavfilter/dnn/Makefile
 
 # audio filters
+OBJS-$(CONFIG_AAP_FILTER)                    += af_aap.o
 OBJS-$(CONFIG_ABENCH_FILTER)                 += f_bench.o
 OBJS-$(CONFIG_ACOMPRESSOR_FILTER)            += af_sidechaincompress.o
 OBJS-$(CONFIG_ACONTRAST_FILTER)              += af_acontrast.o
@@ -513,6 +514,7 @@ OBJS-$(CONFIG_THUMBNAIL_FILTER)              += vf_thumbnail.o
 OBJS-$(CONFIG_THUMBNAIL_CUDA_FILTER)         += vf_thumbnail_cuda.o vf_thumbnail_cuda.ptx.o \
                                                 cuda/load_helper.o
 OBJS-$(CONFIG_TILE_FILTER)                   += vf_tile.o
+OBJS-$(CONFIG_TILTANDSHIFT_FILTER)           += vf_tiltandshift.o
 OBJS-$(CONFIG_TINTERLACE_FILTER)             += vf_tinterlace.o
 OBJS-$(CONFIG_TLUT2_FILTER)                  += vf_lut2.o framesync.o
 OBJS-$(CONFIG_TMEDIAN_FILTER)                += vf_xmedian.o framesync.o

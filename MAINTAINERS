@@ -231,7 +231,6 @@ Codecs:
   rpza.c                                Roberto Togni
   rtjpeg.c, rtjpeg.h                    Reimar Doeffinger
   rv10.c                                Michael Niedermayer
-  s3tc*                                 Ivo van Poorten
   smc.c                                 Mike Melanson
   snow*                                 Michael Niedermayer, Loren Merritt
   sonic.c                               Alex Beregszaszi
@@ -257,6 +256,7 @@ Codecs:
   vp8                                   David Conrad, Ronald Bultje
   vp9                                   Ronald Bultje
   vqavideo.c                            Mike Melanson
+  vvc                                   Nuo Mi
   wmaprodec.c                           Sascha Sommer
   wmavoice.c                            Ronald S. Bultje
   wmv2.c                                Michael Niedermayer
