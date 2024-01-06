@@ -50,47 +50,6 @@
 
 #define DEFAULT_PASS_LOGFILENAME_PREFIX "ffmpeg2pass"
 
-static const char *const opt_name_apad[]                      = {"apad", NULL};
-static const char *const opt_name_autoscale[]                 = {"autoscale", NULL};
-static const char *const opt_name_bits_per_raw_sample[]       = {"bits_per_raw_sample", NULL};
-static const char *const opt_name_bitstream_filters[]         = {"bsf", "absf", "vbsf", NULL};
-static const char *const opt_name_copy_initial_nonkeyframes[] = {"copyinkf", NULL};
-static const char *const opt_name_copy_prior_start[]          = {"copypriorss", NULL};
-static const char *const opt_name_disposition[]               = {"disposition", NULL};
-static const char *const opt_name_enc_time_bases[]            = {"enc_time_base", NULL};
-static const char *const opt_name_enc_stats_pre[]             = {"enc_stats_pre", NULL};
-static const char *const opt_name_enc_stats_post[]            = {"enc_stats_post", NULL};
-static const char *const opt_name_mux_stats[]                 = {"mux_stats", NULL};
-static const char *const opt_name_enc_stats_pre_fmt[]         = {"enc_stats_pre_fmt", NULL};
-static const char *const opt_name_enc_stats_post_fmt[]        = {"enc_stats_post_fmt", NULL};
-static const char *const opt_name_mux_stats_fmt[]             = {"mux_stats_fmt", NULL};
-static const char *const opt_name_filters[]                   = {"filter", "af", "vf", NULL};
-static const char *const opt_name_filter_scripts[]            = {"filter_script", NULL};
-static const char *const opt_name_fix_sub_duration_heartbeat[] = {"fix_sub_duration_heartbeat", NULL};
-static const char *const opt_name_fps_mode[]                  = {"fps_mode", NULL};
-static const char *const opt_name_force_fps[]                 = {"force_fps", NULL};
-static const char *const opt_name_forced_key_frames[]         = {"forced_key_frames", NULL};
-static const char *const opt_name_frame_aspect_ratios[]       = {"aspect", NULL};
-static const char *const opt_name_intra_matrices[]            = {"intra_matrix", NULL};
-static const char *const opt_name_inter_matrices[]            = {"inter_matrix", NULL};
-static const char *const opt_name_chroma_intra_matrices[]     = {"chroma_intra_matrix", NULL};
-static const char *const opt_name_max_frame_rates[]           = {"fpsmax", NULL};
-static const char *const opt_name_max_frames[]                = {"frames", "aframes", "vframes", "dframes", NULL};
-static const char *const opt_name_max_muxing_queue_size[]     = {"max_muxing_queue_size", NULL};
-static const char *const opt_name_muxing_queue_data_threshold[] = {"muxing_queue_data_threshold", NULL};
-static const char *const opt_name_pass[]                      = {"pass", NULL};
-static const char *const opt_name_passlogfiles[]              = {"passlogfile", NULL};
-static const char *const opt_name_presets[]                   = {"pre", "apre", "vpre", "spre", NULL};
-static const char *const opt_name_qscale[]                    = {"q", "qscale", NULL};
-static const char *const opt_name_rc_overrides[]              = {"rc_override", NULL};
-static const char *const opt_name_time_bases[]                = {"time_base", NULL};
-static const char *const opt_name_audio_channels[]            = {"ac", NULL};
-static const char *const opt_name_audio_ch_layouts[]          = {"channel_layout", "ch_layout", NULL};
-static const char *const opt_name_audio_sample_rate[]         = {"ar", NULL};
-static const char *const opt_name_frame_sizes[]               = {"s", NULL};
-static const char *const opt_name_frame_pix_fmts[]            = {"pix_fmt", NULL};
-static const char *const opt_name_sample_fmts[]               = {"sample_fmt", NULL};
-
 static int check_opt_bitexact(void *ctx, const AVDictionary *opts,
                               const char *opt_name, int flag)
 {
@@ -797,7 +756,11 @@ static int new_stream_video(Muxer *mux, const OptionsContext *o,
             av_log(ost, AV_LOG_WARNING, "-top is deprecated, use the setfield filter instead\n");
 #endif
 
+#if FFMPEG_OPT_VSYNC
         ost->vsync_method = video_sync_method;
+#else
+        ost->vsync_method = VSYNC_AUTO;
+#endif
         MATCH_PER_STREAM_OPT(fps_mode, str, fps_mode, oc, st);
         if (fps_mode) {
             ret = parse_and_set_vsync(fps_mode, &ost->vsync_method, ost->file->index, ost->index, 0);
@@ -1363,8 +1326,8 @@ static int ost_add(Muxer *mux, const OptionsContext *o, enum AVMediaType type,
 
     ms->max_frames = INT64_MAX;
     MATCH_PER_STREAM_OPT(max_frames, i64, ms->max_frames, oc, st);
-    for (i = 0; i<o->nb_max_frames; i++) {
-        char *p = o->max_frames[i].specifier;
+    for (i = 0; i < o->max_frames.nb_opt; i++) {
+        char *p = o->max_frames.opt[i].specifier;
         if (!*p && type != AVMEDIA_TYPE_VIDEO) {
             av_log(ost, AV_LOG_WARNING, "Applying unspecific -frames to non video streams, maybe you meant -vframes ?\n");
             break;
@@ -1612,10 +1575,10 @@ static int map_auto_audio(Muxer *mux, const OptionsContext *o)
 static int map_auto_subtitle(Muxer *mux, const OptionsContext *o)
 {
     AVFormatContext *oc = mux->fc;
-    char *subtitle_codec_name = NULL;
+    const char *subtitle_codec_name = NULL;
 
         /* subtitles: pick first */
-    MATCH_PER_TYPE_OPT(codec_names, str, subtitle_codec_name, oc, "s");
+    subtitle_codec_name = opt_match_per_type_str(&o->codec_names, 's');
     if (!avcodec_find_encoder(oc->oformat->subtitle_codec) && !subtitle_codec_name)
         return 0;
 
@@ -2231,7 +2194,6 @@ static int of_parse_group_token(Muxer *mux, const char *token, char *ptr)
     };
     const AVClass class = {
         .class_name = "StreamGroupType",
-        .item_name  = av_default_item_name,
         .option     = opts,
         .version    = LIBAVUTIL_VERSION_INT,
     };
@@ -2334,12 +2296,12 @@ end:
 static int of_add_groups(Muxer *mux, const OptionsContext *o)
 {
     /* process manually set groups */
-    for (int i = 0; i < o->nb_stream_groups; i++) {
+    for (int i = 0; i < o->stream_groups.nb_opt; i++) {
         const char *token;
         char *str, *ptr = NULL;
         int ret = 0;
 
-        str = av_strdup(o->stream_groups[i].u.str);
+        str = av_strdup(o->stream_groups.opt[i].u.str);
         if (!str)
             return ret;
 
@@ -2359,17 +2321,17 @@ static int of_add_programs(Muxer *mux, const OptionsContext *o)
 {
     AVFormatContext *oc = mux->fc;
     /* process manually set programs */
-    for (int i = 0; i < o->nb_program; i++) {
+    for (int i = 0; i < o->program.nb_opt; i++) {
         AVDictionary *dict = NULL;
         const AVDictionaryEntry *e;
         AVProgram *program;
         int ret, progid = i + 1;
 
-        ret = av_dict_parse_string(&dict, o->program[i].u.str, "=", ":",
+        ret = av_dict_parse_string(&dict, o->program.opt[i].u.str, "=", ":",
                                    AV_DICT_MULTIKEY);
         if (ret < 0) {
             av_log(mux, AV_LOG_ERROR, "Error parsing program specification %s\n",
-                   o->program[i].u.str);
+                   o->program.opt[i].u.str);
             return ret;
         }
 
@@ -2457,21 +2419,21 @@ static int parse_meta_type(void *logctx, const char *arg,
 static int of_add_metadata(OutputFile *of, AVFormatContext *oc,
                            const OptionsContext *o)
 {
-    for (int i = 0; i < o->nb_metadata; i++) {
+    for (int i = 0; i < o->metadata.nb_opt; i++) {
         AVDictionary **m;
         char type, *val;
         const char *stream_spec;
         int index = 0, ret = 0;
 
-        val = strchr(o->metadata[i].u.str, '=');
+        val = strchr(o->metadata.opt[i].u.str, '=');
         if (!val) {
             av_log(of, AV_LOG_FATAL, "No '=' character in metadata string %s.\n",
-                   o->metadata[i].u.str);
+                   o->metadata.opt[i].u.str);
             return AVERROR(EINVAL);
         }
         *val++ = 0;
 
-        ret = parse_meta_type(of, o->metadata[i].specifier, &type, &index, &stream_spec);
+        ret = parse_meta_type(of, o->metadata.opt[i].specifier, &type, &index, &stream_spec);
         if (ret < 0)
             return ret;
 
@@ -2480,7 +2442,7 @@ static int of_add_metadata(OutputFile *of, AVFormatContext *oc,
                 OutputStream *ost = of->streams[j];
                 if ((ret = check_stream_specifier(oc, oc->streams[j], stream_spec)) > 0) {
 #if FFMPEG_ROTATION_METADATA
-                    if (!strcmp(o->metadata[i].u.str, "rotate")) {
+                    if (!strcmp(o->metadata.opt[i].u.str, "rotate")) {
                         char *tail;
                         double theta = av_strtod(val, &tail);
                         if (!*tail) {
@@ -2495,7 +2457,7 @@ static int of_add_metadata(OutputFile *of, AVFormatContext *oc,
                                "instead.");
                     } else {
 #endif
-                        av_dict_set(&oc->streams[j]->metadata, o->metadata[i].u.str, *val ? val : NULL, 0);
+                        av_dict_set(&oc->streams[j]->metadata, o->metadata.opt[i].u.str, *val ? val : NULL, 0);
 #if FFMPEG_ROTATION_METADATA
                     }
 #endif
@@ -2522,10 +2484,10 @@ static int of_add_metadata(OutputFile *of, AVFormatContext *oc,
                 m = &oc->programs[index]->metadata;
                 break;
             default:
-                av_log(of, AV_LOG_FATAL, "Invalid metadata specifier %s.\n", o->metadata[i].specifier);
+                av_log(of, AV_LOG_FATAL, "Invalid metadata specifier %s.\n", o->metadata.opt[i].specifier);
                 return AVERROR(EINVAL);
             }
-            av_dict_set(m, o->metadata[i].u.str, *val ? val : NULL, 0);
+            av_dict_set(m, o->metadata.opt[i].u.str, *val ? val : NULL, 0);
         }
     }
 
@@ -2673,9 +2635,9 @@ static int copy_meta(Muxer *mux, const OptionsContext *o)
     int ret;
 
     /* copy metadata */
-    for (int i = 0; i < o->nb_metadata_map; i++) {
+    for (int i = 0; i < o->metadata_map.nb_opt; i++) {
         char *p;
-        int in_file_index = strtol(o->metadata_map[i].u.str, &p, 0);
+        int in_file_index = strtol(o->metadata_map.opt[i].u.str, &p, 0);
 
         if (in_file_index >= nb_input_files) {
             av_log(mux, AV_LOG_FATAL, "Invalid input file index %d while "
@@ -2684,7 +2646,7 @@ static int copy_meta(Muxer *mux, const OptionsContext *o)
         }
         ret = copy_metadata(mux,
                             in_file_index >= 0 ? input_files[in_file_index]->ctx : NULL,
-                            o->metadata_map[i].specifier, *p ? p + 1 : p,
+                            o->metadata_map.opt[i].specifier, *p ? p + 1 : p,
                             &metadata_global_manual, &metadata_streams_manual,
                             &metadata_chapters_manual);
         if (ret < 0)
