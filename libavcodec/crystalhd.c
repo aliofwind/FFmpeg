@@ -778,6 +778,7 @@ static int crystalhd_receive_frame(AVCodecContext *avctx, AVFrame *frame)
 #define DEFINE_CRYSTALHD_DECODER(x, X, bsf_name) \
     static const AVClass x##_crystalhd_class = { \
         .class_name = #x "_crystalhd", \
+        .item_name = av_default_item_name, \
         .option = options, \
         .version = LIBAVUTIL_VERSION_INT, \
     }; \
@@ -796,7 +797,6 @@ static int crystalhd_receive_frame(AVCodecContext *avctx, AVFrame *frame)
         .p.capabilities = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_AVOID_PROBING | AV_CODEC_CAP_HARDWARE, \
         .caps_internal  = FF_CODEC_CAP_NOT_INIT_THREADSAFE | \
                           FF_CODEC_CAP_SETS_FRAME_PROPS, \
-        .p.pix_fmts     = (const enum AVPixelFormat[]){AV_PIX_FMT_YUYV422, AV_PIX_FMT_NONE}, \
         .p.wrapper_name = "crystalhd", \
     };
 

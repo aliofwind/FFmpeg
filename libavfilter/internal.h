@@ -26,20 +26,6 @@
 
 #include "libavutil/internal.h"
 #include "avfilter.h"
-#include "framequeue.h"
-
-typedef struct AVFilterCommand {
-    double time;                ///< time expressed in seconds
-    char *command;              ///< command
-    char *arg;                  ///< optional argument for the command
-    int flags;
-    struct AVFilterCommand *next;
-} AVFilterCommand;
-
-/**
- * Update the position of a link in the age heap.
- */
-void ff_avfilter_graph_update_heap(AVFilterGraph *graph, AVFilterLink *link);
 
 /**
  * A filter pad used for either input or output.
@@ -127,24 +113,28 @@ struct AVFilterPad {
     int (*config_props)(AVFilterLink *link);
 };
 
-struct AVFilterGraphInternal {
-    void *thread;
-    avfilter_execute_func *thread_execute;
-    FFFrameQueueGlobal frame_queues;
-};
+typedef struct FFFilterContext {
+    /**
+     * The public AVFilterContext. See avfilter.h for it.
+     */
+    AVFilterContext p;
 
-struct AVFilterInternal {
     avfilter_execute_func *execute;
 
     // 1 when avfilter_init_*() was successfully called on this filter
     // 0 otherwise
     int initialized;
-};
+} FFFilterContext;
+
+static inline FFFilterContext *fffilterctx(AVFilterContext *ctx)
+{
+    return (FFFilterContext*)ctx;
+}
 
 static av_always_inline int ff_filter_execute(AVFilterContext *ctx, avfilter_action_func *func,
                                               void *arg, int *ret, int nb_jobs)
 {
-    return ctx->internal->execute(ctx, func, arg, ret, nb_jobs);
+    return fffilterctx(ctx)->execute(ctx, func, arg, ret, nb_jobs);
 }
 
 enum FilterFormatsState {
@@ -317,6 +307,7 @@ int ff_request_frame(AVFilterLink *link);
 #define AVFILTER_DEFINE_CLASS_EXT(name, desc, options) \
     static const AVClass name##_class = {       \
         .class_name = desc,                     \
+        .item_name  = av_default_item_name,     \
         .option     = options,                  \
         .version    = LIBAVUTIL_VERSION_INT,    \
         .category   = AV_CLASS_CATEGORY_FILTER, \
@@ -344,23 +335,6 @@ int ff_request_frame(AVFilterLink *link);
  * is responsible for unreferencing frame in case of error.
  */
 int ff_filter_frame(AVFilterLink *link, AVFrame *frame);
-
-/**
- * Allocate a new filter context and return it.
- *
- * @param filter what filter to create an instance of
- * @param inst_name name to give to the new filter context
- *
- * @return newly created filter context or NULL on failure
- */
-AVFilterContext *ff_filter_alloc(const AVFilter *filter, const char *inst_name);
-
-int ff_filter_activate(AVFilterContext *filter);
-
-/**
- * Remove a filter from a graph;
- */
-void ff_filter_graph_remove_filter(AVFilterGraph *graph, AVFilterContext *filter);
 
 /**
  * The filter is aware of hardware frames, and any hardware frame context
@@ -403,18 +377,5 @@ int ff_filter_process_command(AVFilterContext *ctx, const char *cmd,
  */
 int ff_filter_init_hw_frames(AVFilterContext *avctx, AVFilterLink *link,
                              int default_pool_size);
-
-/**
- * Parse filter options into a dictionary.
- *
- * @param logctx context for logging
- * @param priv_class a filter's private class for shorthand options or NULL
- * @param options dictionary to store parsed options in
- * @param args options string to parse
- *
- * @return a non-negative number on success, a negative error code on failure
- */
-int ff_filter_opt_parse(void *logctx, const AVClass *priv_class,
-                        AVDictionary **options, const char *args);
 
 #endif /* AVFILTER_INTERNAL_H */

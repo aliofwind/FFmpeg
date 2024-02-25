@@ -415,36 +415,58 @@ static MuxStream *mux_stream_alloc(Muxer *mux, enum AVMediaType type)
 static int ost_get_filters(const OptionsContext *o, AVFormatContext *oc,
                            OutputStream *ost, char **dst)
 {
-    const char *filters = NULL, *filters_script = NULL;
+    const char *filters = NULL;
+#if FFMPEG_OPT_FILTER_SCRIPT
+    const char *filters_script = NULL;
 
     MATCH_PER_STREAM_OPT(filter_scripts, str, filters_script, oc, ost->st);
+#endif
     MATCH_PER_STREAM_OPT(filters,        str, filters,        oc, ost->st);
 
     if (!ost->enc) {
-        if (filters_script || filters) {
+        if (
+#if FFMPEG_OPT_FILTER_SCRIPT
+            filters_script ||
+#endif
+            filters) {
             av_log(ost, AV_LOG_ERROR,
                    "%s '%s' was specified, but codec copy was selected. "
                    "Filtering and streamcopy cannot be used together.\n",
+#if FFMPEG_OPT_FILTER_SCRIPT
                    filters ? "Filtergraph" : "Filtergraph script",
-                   filters ? filters : filters_script);
+                   filters ? filters : filters_script
+#else
+                   "Filtergraph", filters
+#endif
+                   );
             return AVERROR(ENOSYS);
         }
         return 0;
     }
 
     if (!ost->ist) {
-        if (filters_script || filters) {
+        if (
+#if FFMPEG_OPT_FILTER_SCRIPT
+            filters_script ||
+#endif
+            filters) {
             av_log(ost, AV_LOG_ERROR,
                    "%s '%s' was specified for a stream fed from a complex "
                    "filtergraph. Simple and complex filtering cannot be used "
                    "together for the same stream.\n",
+#if FFMPEG_OPT_FILTER_SCRIPT
                    filters ? "Filtergraph" : "Filtergraph script",
-                   filters ? filters : filters_script);
+                   filters ? filters : filters_script
+#else
+                   "Filtergraph", filters
+#endif
+                   );
             return AVERROR(EINVAL);
         }
         return 0;
     }
 
+#if FFMPEG_OPT_FILTER_SCRIPT
     if (filters_script && filters) {
         av_log(ost, AV_LOG_ERROR, "Both -filter and -filter_script set\n");
         return AVERROR(EINVAL);
@@ -452,7 +474,9 @@ static int ost_get_filters(const OptionsContext *o, AVFormatContext *oc,
 
     if (filters_script)
         *dst = file_read(filters_script);
-    else if (filters)
+    else
+#endif
+    if (filters)
         *dst = av_strdup(filters);
     else
         *dst = av_strdup(ost->type == AVMEDIA_TYPE_VIDEO ? "null" : "anull");
@@ -461,9 +485,8 @@ static int ost_get_filters(const OptionsContext *o, AVFormatContext *oc,
 
 static int parse_matrix_coeffs(void *logctx, uint16_t *dest, const char *str)
 {
-    int i;
     const char *p = str;
-    for (i = 0;; i++) {
+    for (int i = 0;; i++) {
         dest[i] = atoi(p);
         if (i == 63)
             break;
@@ -1084,7 +1107,6 @@ static int ost_add(Muxer *mux, const OptionsContext *o, enum AVMediaType type,
     const char *bsfs = NULL, *time_base = NULL;
     char *filters = NULL, *next, *codec_tag = NULL;
     double qscale = -1;
-    int i;
 
     st = avformat_new_stream(oc, NULL);
     if (!st)
@@ -1326,7 +1348,7 @@ static int ost_add(Muxer *mux, const OptionsContext *o, enum AVMediaType type,
 
     ms->max_frames = INT64_MAX;
     MATCH_PER_STREAM_OPT(max_frames, i64, ms->max_frames, oc, st);
-    for (i = 0; i < o->max_frames.nb_opt; i++) {
+    for (int i = 0; i < o->max_frames.nb_opt; i++) {
         char *p = o->max_frames.opt[i].specifier;
         if (!*p && type != AVMEDIA_TYPE_VIDEO) {
             av_log(ost, AV_LOG_WARNING, "Applying unspecific -frames to non video streams, maybe you meant -vframes ?\n");
@@ -1717,6 +1739,7 @@ static int of_add_attachments(Muxer *mux, const OptionsContext *o)
     for (int i = 0; i < o->nb_attachments; i++) {
         AVIOContext *pb;
         uint8_t *attachment;
+        char *attachment_filename;
         const char *p;
         int64_t len;
 
@@ -1764,13 +1787,20 @@ read_fail:
         av_log(mux, AV_LOG_VERBOSE, "Creating attachment stream from file %s\n",
                o->attachments[i]);
 
+        attachment_filename = av_strdup(o->attachments[i]);
+        if (!attachment_filename) {
+            av_free(attachment);
+            return AVERROR(ENOMEM);
+        }
+
         err = ost_add(mux, o, AVMEDIA_TYPE_ATTACHMENT, NULL, NULL, &ost);
         if (err < 0) {
+            av_free(attachment_filename);
             av_freep(&attachment);
             return err;
         }
 
-        ost->attachment_filename       = o->attachments[i];
+        ost->attachment_filename       = attachment_filename;
         ost->par_in->extradata         = attachment;
         ost->par_in->extradata_size    = len;
 
@@ -2001,6 +2031,8 @@ static int of_parse_iamf_audio_element_layers(Muxer *mux, AVStreamGroup *stg, ch
         int demixing = 0, recon_gain = 0;
         int layer = 0;
 
+        if (ptr)
+            ptr += strspn(ptr, " \n\t\r");
         if (av_strstart(token, "layer=", &token))
             layer = 1;
         else if (av_strstart(token, "demixing=", &token))
@@ -2068,6 +2100,8 @@ static int of_parse_iamf_submixes(Muxer *mux, AVStreamGroup *stg, char *ptr)
         const char *subtoken;
         char *subptr = NULL;
 
+        if (ptr)
+            ptr += strspn(ptr, " \n\t\r");
         if (!av_strstart(token, "submix=", &token)) {
             av_log(mux, AV_LOG_ERROR, "No submix in mix presentation specification \"%s\"\n", token);
             goto fail;
@@ -2096,6 +2130,8 @@ static int of_parse_iamf_submixes(Muxer *mux, AVStreamGroup *stg, char *ptr)
             const AVDictionaryEntry *e;
             int element = 0, layout = 0;
 
+            if (subptr)
+                subptr += strspn(subptr, " \n\t\r");
             if (av_strstart(subtoken, "element=", &subtoken))
                 element = 1;
             else if (av_strstart(subtoken, "layout=", &subtoken))
@@ -2115,7 +2151,6 @@ static int of_parse_iamf_submixes(Muxer *mux, AVStreamGroup *stg, char *ptr)
 
                 if (e = av_dict_get(dict, "stg", NULL, 0))
                     idx = strtoll(e->value, &endptr, 0);
-                av_dict_set(&dict, "stg", NULL, 0);
                 if (!endptr || *endptr || idx < 0 || idx >= oc->nb_stream_groups - 1 ||
                     oc->stream_groups[idx]->type != AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT) {
                     av_log(mux, AV_LOG_ERROR, "Invalid or missing stream group index in "
@@ -2136,6 +2171,7 @@ static int of_parse_iamf_submixes(Muxer *mux, AVStreamGroup *stg, char *ptr)
                     av_iamf_param_definition_alloc(AV_IAMF_PARAMETER_DEFINITION_MIX_GAIN, 0, NULL);
                 if (!submix_element->element_mix_config)
                     ret = AVERROR(ENOMEM);
+                av_dict_set(&dict, "stg", NULL, 0);
                 av_opt_set_dict2(submix_element, &dict, AV_OPT_SEARCH_CHILDREN);
             } else if (layout) {
                 AVIAMFSubmixLayout *submix_layout = av_iamf_submix_add_layout(submix);
@@ -2185,7 +2221,7 @@ static int of_parse_group_token(Muxer *mux, const char *token, char *ptr)
     const AVDictionaryEntry *e;
     const AVOption opts[] = {
         { "type", "Set group type", offsetof(AVStreamGroup, type), AV_OPT_TYPE_INT,
-                { .i64 = 0 }, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, "type" },
+                { .i64 = 0 }, 0, INT_MAX, AV_OPT_FLAG_ENCODING_PARAM, .unit = "type" },
             { "iamf_audio_element",    NULL, 0, AV_OPT_TYPE_CONST,
                 { .i64 = AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT },    .unit = "type" },
             { "iamf_mix_presentation", NULL, 0, AV_OPT_TYPE_CONST,
@@ -2194,6 +2230,7 @@ static int of_parse_group_token(Muxer *mux, const char *token, char *ptr)
     };
     const AVClass class = {
         .class_name = "StreamGroupType",
+        .item_name  = av_default_item_name,
         .option     = opts,
         .version    = LIBAVUTIL_VERSION_INT,
     };
@@ -2306,8 +2343,11 @@ static int of_add_groups(Muxer *mux, const OptionsContext *o)
             return ret;
 
         token = av_strtok(str, ",", &ptr);
-        if (token)
+        if (token) {
+            if (ptr)
+                ptr += strspn(ptr, " \n\t\r");
             ret = of_parse_group_token(mux, token, ptr);
+        }
 
         av_free(str);
         if (ret < 0)
@@ -2499,14 +2539,13 @@ static int copy_chapters(InputFile *ifile, OutputFile *ofile, AVFormatContext *o
 {
     AVFormatContext *is = ifile->ctx;
     AVChapter **tmp;
-    int i;
 
     tmp = av_realloc_f(os->chapters, is->nb_chapters + os->nb_chapters, sizeof(*os->chapters));
     if (!tmp)
         return AVERROR(ENOMEM);
     os->chapters = tmp;
 
-    for (i = 0; i < is->nb_chapters; i++) {
+    for (int i = 0; i < is->nb_chapters; i++) {
         AVChapter *in_ch = is->chapters[i], *out_ch;
         int64_t start_time = (ofile->start_time == AV_NOPTS_VALUE) ? 0 : ofile->start_time;
         int64_t ts_off   = av_rescale_q(start_time - ifile->ts_offset,
@@ -3013,7 +3052,6 @@ int of_open(const OptionsContext *o, const char *filename, Scheduler *sch)
     of->start_time     = o->start_time;
     of->shortest       = o->shortest;
 
-    mux->thread_queue_size = o->thread_queue_size > 0 ? o->thread_queue_size : 8;
     mux->limit_filesize    = o->limit_filesize;
     av_dict_copy(&mux->opts, o->g->format_opts, 0);
 
@@ -3047,7 +3085,7 @@ int of_open(const OptionsContext *o, const char *filename, Scheduler *sch)
     }
 
     err = sch_add_mux(sch, muxer_thread, mux_check_init, mux,
-                      !strcmp(oc->oformat->name, "rtp"));
+                      !strcmp(oc->oformat->name, "rtp"), o->thread_queue_size);
     if (err < 0)
         return err;
     mux->sch     = sch;

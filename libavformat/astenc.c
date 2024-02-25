@@ -143,14 +143,16 @@ static int ast_write_trailer(AVFormatContext *s)
 
         /* Loopstart if provided */
         if (ast->loopstart > 0) {
-        if (ast->loopstart >= samples) {
-            av_log(s, AV_LOG_WARNING, "Loopstart value is out of range and will be ignored\n");
-            ast->loopstart = -1;
+            if (ast->loopstart >= samples) {
+                av_log(s, AV_LOG_WARNING, "Loopstart value is out of range and will be ignored\n");
+                ast->loopstart = -1;
+                avio_skip(pb, 4);
+            } else {
+                avio_wb32(pb, ast->loopstart);
+            }
+        } else {
             avio_skip(pb, 4);
-        } else
-        avio_wb32(pb, ast->loopstart);
-        } else
-            avio_skip(pb, 4);
+        }
 
         /* Loopend if provided. Otherwise number of samples again */
         if (ast->loopend && ast->loopstart >= 0) {
@@ -190,6 +192,7 @@ static const AVOption options[] = {
 
 static const AVClass ast_muxer_class = {
     .class_name = "AST muxer",
+    .item_name  = av_default_item_name,
     .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
 };

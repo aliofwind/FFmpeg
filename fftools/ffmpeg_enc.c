@@ -93,7 +93,6 @@ static int hw_device_setup_for_encode(OutputStream *ost, AVBufferRef *frames_ref
 {
     const AVCodecHWConfig *config;
     HWDevice *dev = NULL;
-    int i;
 
     if (frames_ref &&
         ((AVHWFramesContext*)frames_ref->data)->format ==
@@ -103,7 +102,7 @@ static int hw_device_setup_for_encode(OutputStream *ost, AVBufferRef *frames_ref
         frames_ref = NULL;
     }
 
-    for (i = 0;; i++) {
+    for (int i = 0;; i++) {
         config = avcodec_get_hw_config(ost->enc_ctx->codec, i);
         if (!config)
             break;
@@ -171,7 +170,7 @@ int enc_open(void *opaque, const AVFrame *frame)
     InputStream *ist = ost->ist;
     Encoder              *e = ost->enc;
     AVCodecContext *enc_ctx = ost->enc_ctx;
-    AVCodecContext *dec_ctx = NULL;
+    Decoder            *dec;
     const AVCodec      *enc = enc_ctx->codec;
     OutputFile          *of = ost->file;
     FrameData *fd;
@@ -193,9 +192,8 @@ int enc_open(void *opaque, const AVFrame *frame)
     if (ret < 0)
         return ret;
 
-    if (ist) {
-        dec_ctx = ist->dec_ctx;
-    }
+    if (ist)
+        dec = ist->decoder;
 
     // the timebase is chosen by filtering code
     if (ost->type == AVMEDIA_TYPE_AUDIO || ost->type == AVMEDIA_TYPE_VIDEO) {
@@ -279,14 +277,16 @@ int enc_open(void *opaque, const AVFrame *frame)
             enc_ctx->width     = ost->ist->par->width;
             enc_ctx->height    = ost->ist->par->height;
         }
-        if (dec_ctx && dec_ctx->subtitle_header) {
+
+        av_assert0(dec);
+        if (dec->subtitle_header) {
             /* ASS code assumes this buffer is null terminated so add extra byte. */
-            enc_ctx->subtitle_header = av_mallocz(dec_ctx->subtitle_header_size + 1);
+            enc_ctx->subtitle_header = av_mallocz(dec->subtitle_header_size + 1);
             if (!enc_ctx->subtitle_header)
                 return AVERROR(ENOMEM);
-            memcpy(enc_ctx->subtitle_header, dec_ctx->subtitle_header,
-                   dec_ctx->subtitle_header_size);
-            enc_ctx->subtitle_header_size = dec_ctx->subtitle_header_size;
+            memcpy(enc_ctx->subtitle_header, dec->subtitle_header,
+                   dec->subtitle_header_size);
+            enc_ctx->subtitle_header_size = dec->subtitle_header_size;
         }
 
         break;
@@ -352,8 +352,7 @@ int enc_open(void *opaque, const AVFrame *frame)
      * global side data.
      */
     if (ist) {
-        int i;
-        for (i = 0; i < ist->st->codecpar->nb_coded_side_data; i++) {
+        for (int i = 0; i < ist->st->codecpar->nb_coded_side_data; i++) {
             AVPacketSideData *sd_src = &ist->st->codecpar->coded_side_data[i];
             if (sd_src->type != AV_PKT_DATA_CPB_PROPERTIES) {
                 AVPacketSideData *sd_dst = av_packet_side_data_new(&ost->par_in->coded_side_data,
@@ -612,7 +611,7 @@ static int update_video_stats(OutputStream *ost, const AVPacket *pkt, int write_
 
     bitrate     = (pkt->size * 8) / av_q2d(enc->time_base) / 1000.0;
     avg_bitrate = (double)(e->data_size * 8) / ti1 / 1000.0;
-    fprintf(vstats_file, "s_size= %8.0fkB time= %0.3f br= %7.1fkbits/s avg_br= %7.1fkbits/s ",
+    fprintf(vstats_file, "s_size= %8.0fKiB time= %0.3f br= %7.1fkbits/s avg_br= %7.1fkbits/s ",
            (double)e->data_size / 1024, ti1, bitrate, avg_bitrate);
     fprintf(vstats_file, "type= %c\n", av_get_picture_type_char(pict_type));
 

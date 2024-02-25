@@ -215,7 +215,7 @@ static av_cold int libdav1d_init(AVCodecContext *c)
 #endif
     int res;
 
-    av_log(c, AV_LOG_INFO, "libdav1d %s\n", dav1d_version());
+    av_log(c, AV_LOG_VERBOSE, "libdav1d %s\n", dav1d_version());
 
     dav1d_default_settings(&s);
     s.logger.cookie = c;
@@ -682,6 +682,7 @@ static const AVOption libdav1d_options[] = {
 
 static const AVClass libdav1d_class = {
     .class_name = "libdav1d decoder",
+    .item_name  = av_default_item_name,
     .option     = libdav1d_options,
     .version    = LIBAVUTIL_VERSION_INT,
 };

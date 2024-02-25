@@ -62,14 +62,14 @@ unsigned ff_d3d12va_get_surface_index(const AVCodecContext *avctx,
     if (!res)
         goto fail;
 
-    if (!curr) {
-        for (i = 0; i < ctx->max_num_ref; i++) {
-            if (ctx->ref_resources[i] && res == ctx->ref_resources[i]) {
-                ctx->used_mask |= 1 << i;
-                return i;
-            }
+    for (i = 0; i < ctx->max_num_ref; i++) {
+        if (ctx->ref_resources[i] && res == ctx->ref_resources[i]) {
+            ctx->used_mask |= 1 << i;
+            return i;
         }
-    } else {
+    }
+
+    if (curr) {
         for (i = 0; i < ctx->max_num_ref; i++) {
             if (!((ctx->used_mask >> i) & 0x1)) {
                 ctx->ref_resources[i] = res;
@@ -79,7 +79,7 @@ unsigned ff_d3d12va_get_surface_index(const AVCodecContext *avctx,
     }
 
 fail:
-    av_log(avctx, AV_LOG_WARNING, "Could not get surface index. Using 0 instead.\n");
+    av_log((AVCodecContext *)avctx, AV_LOG_WARNING, "Could not get surface index. Using 0 instead.\n");
     return 0;
 }
 
@@ -239,10 +239,14 @@ static int d3d12va_create_decoder(AVCodecContext *avctx)
 
     DX_CHECK(ID3D12VideoDevice_CheckFeatureSupport(device_hwctx->video_device, D3D12_FEATURE_VIDEO_DECODE_SUPPORT,
                                                    &feature, sizeof(feature)));
-    if (!(feature.SupportFlags & D3D12_VIDEO_DECODE_SUPPORT_FLAG_SUPPORTED) ||
-        !(feature.DecodeTier >= D3D12_VIDEO_DECODE_TIER_2)) {
-        av_log(avctx, AV_LOG_ERROR, "D3D12 decoder doesn't support on this device\n");
-        return AVERROR(EINVAL);
+    if (!(feature.SupportFlags & D3D12_VIDEO_DECODE_SUPPORT_FLAG_SUPPORTED)) {
+        av_log(avctx, AV_LOG_ERROR, "D3D12 video decode is not supported on this device.\n");
+        return AVERROR(ENOSYS);
+    }
+    if (!(feature.DecodeTier >= D3D12_VIDEO_DECODE_TIER_2)) {
+        av_log(avctx, AV_LOG_ERROR, "D3D12 video decode on this device requires tier %d support, "
+               "but it is not implemented.\n", feature.DecodeTier);
+        return AVERROR_PATCHWELCOME;
     }
 
     desc = (D3D12_VIDEO_DECODER_DESC) {
@@ -266,7 +270,6 @@ fail:
 int ff_d3d12va_common_frame_params(AVCodecContext *avctx, AVBufferRef *hw_frames_ctx)
 {
     AVHWFramesContext      *frames_ctx   = (AVHWFramesContext *)hw_frames_ctx->data;
-    AVHWDeviceContext      *device_ctx   = frames_ctx->device_ctx;
 
     frames_ctx->format    = AV_PIX_FMT_D3D12;
     frames_ctx->sw_format = avctx->sw_pix_fmt == AV_PIX_FMT_YUV420P10 ? AV_PIX_FMT_P010 : AV_PIX_FMT_NV12;
@@ -408,8 +411,6 @@ static inline int d3d12va_update_reference_frames_state(AVCodecContext *avctx, D
                                                         ID3D12Resource *current_resource, int state_before, int state_end)
 {
     D3D12VADecodeContext   *ctx          = D3D12VA_DECODE_CONTEXT(avctx);
-    AVHWFramesContext      *frames_ctx   = D3D12VA_FRAMES_CONTEXT(avctx);
-    AVD3D12VAFramesContext *frames_hwctx = frames_ctx->hwctx;
 
     int num_barrier = 0;
     for (int i = 0; i < ctx->max_num_ref; i++) {
@@ -436,8 +437,6 @@ int ff_d3d12va_common_end_frame(AVCodecContext *avctx, AVFrame *frame,
 {
     int ret;
     D3D12VADecodeContext   *ctx               = D3D12VA_DECODE_CONTEXT(avctx);
-    AVHWFramesContext      *frames_ctx        = D3D12VA_FRAMES_CONTEXT(avctx);
-    AVD3D12VAFramesContext *frames_hwctx      = frames_ctx->hwctx;
     ID3D12Resource         *buffer            = NULL;
     ID3D12CommandAllocator *command_allocator = NULL;
     AVD3D12VAFrame         *f                 = (AVD3D12VAFrame *)frame->data[0];

@@ -902,16 +902,17 @@ static int FUNC(vps) (CodedBitstreamContext *ctx, RWContext *rw,
                        current->vps_ols_mode_idc == 1) {
                 num_layers_in_ols = i + 1;
             } else if (current->vps_ols_mode_idc == 2) {
-                for (k = 0, j = 0; k <= current->vps_max_layers_minus1; k++) {
+                for (k = 0, j = 0; k <= current->vps_max_layers_minus1; k++)
                     if (layer_included_in_ols_flag[i][k])
                         j++;
-                    num_layers_in_ols = j;
-                }
+                num_layers_in_ols = j;
             }
             if (num_layers_in_ols > 1) {
                 num_multi_layer_olss++;
             }
         }
+        if (!current->vps_each_layer_is_an_ols_flag && num_multi_layer_olss == 0)
+            return AVERROR_INVALIDDATA;
     }
 
     for (i = 0; i <= current->vps_num_ptls_minus1; i++) {
@@ -2455,6 +2456,7 @@ static int FUNC(scaling_list_data)(CodedBitstreamContext *ctx, RWContext *rw,
 static int FUNC(aps)(CodedBitstreamContext *ctx, RWContext *rw,
                      H266RawAPS *current, int prefix)
 {
+    int aps_id_max = MAX_UINT_BITS(5);
     int err;
 
     if (prefix)
@@ -2467,7 +2469,12 @@ static int FUNC(aps)(CodedBitstreamContext *ctx, RWContext *rw,
                                        : VVC_SUFFIX_APS_NUT));
 
     ub(3, aps_params_type);
-    ub(5, aps_adaptation_parameter_set_id);
+    if (current->aps_params_type == VVC_ASP_TYPE_ALF ||
+        current->aps_params_type == VVC_ASP_TYPE_SCALING)
+        aps_id_max = 7;
+    else if (current->aps_params_type == VVC_ASP_TYPE_LMCS)
+        aps_id_max = 3;
+    u(5, aps_adaptation_parameter_set_id, 0, aps_id_max);
     flag(aps_chroma_present_flag);
     if (current->aps_params_type == VVC_ASP_TYPE_ALF)
         CHECK(FUNC(alf_data)(ctx, rw, current));
@@ -3423,7 +3430,7 @@ static int FUNC(slice_header) (CodedBitstreamContext *ctx, RWContext *rw,
 static int FUNC(sei_decoded_picture_hash) (CodedBitstreamContext *ctx,
                                            RWContext *rw,
                                            H266RawSEIDecodedPictureHash *
-                                           current)
+                                           current, SEIMessageState *unused)
 {
     int err, c_idx, i;
 

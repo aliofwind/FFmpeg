@@ -307,10 +307,6 @@ For example, in case of the @ref{drawtext,,drawtext filter}, you might prefer to
 use the @option{textfile} option in place of @option{text} to specify the text
 to render.
 
-When using the @command{ffmpeg} tool, you might consider to use the
-@ref{filter_script option,,-filter_script option,ffmpeg} or
-@ref{filter_complex_script option,,-filter_complex_script option,ffmpeg}.
-
 @chapter Timeline editing
 
 Some filters support a generic @option{enable} option. For the filters
@@ -14125,15 +14121,6 @@ For example:
 @example
 ffmpeg -i in.vob -vf "fieldorder=bff" out.dv
 @end example
-
-@section fifo, afifo
-
-Buffer input images and send them when they are requested.
-
-It is mainly useful when auto-inserted by the libavfilter
-framework.
-
-It does not take parameters.
 
 @section fillborders
 
@@ -28717,10 +28704,10 @@ it'll always be captured.
 @item framerate
 Maximum framerate at which the desktop will be captured - the interval between
 successive frames will not be smaller than the inverse of the framerate. When
-the desktop is not being updated often enough, the filter will duplicate
-a previous frame. Note that there is no background buffering going on, so when
-the filter is not polled often enough then the actual inter-frame interval may
-be significantly larger.
+@var{dup_frames} is true (the default) and the desktop is not being updated
+often enough, the filter will duplicate a previous frame. Note that there is no
+background buffering going on, so when the filter is not polled often enough
+then the actual inter-frame interval may be significantly larger.
 
 Defaults to 30 FPS.
 
@@ -28752,6 +28739,13 @@ Passes all supported output formats to DDA and returns what DDA decides to use.
 @item x2bgr10
 Filter initialization will fail if 10 bit format is requested but unavailable.
 @end table
+
+@item dup_frames
+When this option is set to true (the default), the filter will duplicate frames
+when the desktop has not been updated in order to maintain approximately
+constant target framerate. When this option is set to false, the filter will
+wait for the desktop to be updated (inter-frame intervals may vary significantly
+in this case).
 
 @end table
 

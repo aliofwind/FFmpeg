@@ -2,6 +2,7 @@ Entries are sorted chronologically from oldest to youngest within each release,
 releases are sorted from youngest to oldest.
 
 version <next>:
+- DXV DXT1 encoder
 - LEAD MCMP decoder
 - EVC decoding using external library libxevd
 - EVC encoding using external library libxeve
@@ -18,6 +19,14 @@ version <next>:
 - lavu/eval: introduce randomi() function in expressions
 - VVC decoder
 - fsync filter
+- Raw Captions with Time (RCWT) closed caption muxer
+- ffmpeg CLI -bsf option may now be used for input as well as output
+- ffmpeg CLI options may now be used as -/opt <path>, which is equivalent
+  to -opt <contents of file <path>>
+- showinfo bitstream filter
+- a C11-compliant compiler is now required; note that this requirement
+  will be bumped to C17 in the near future, so consider updating your
+  build environment if it lacks C17 support
 
 version 6.1:
 - libaribcaption decoder

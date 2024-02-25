@@ -36,7 +36,7 @@ fate-ffmpeg-attached_pics: CMD = threads=2 framecrc -i $(TARGET_SAMPLES)/lossles
 
 FATE_SAMPLES_FFMPEG-$(call FILTERDEMDEC, COLORKEY OVERLAY SCALE, MPEGPS IMAGE_PPM_PIPE, CAVS PPM, CAVSVIDEO_PARSER) += fate-ffmpeg-filter_colorkey
 fate-ffmpeg-filter_colorkey: tests/data/filtergraphs/colorkey
-fate-ffmpeg-filter_colorkey: CMD = framecrc -auto_conversion_filters -idct simple -fflags +bitexact -flags +bitexact  -sws_flags +accurate_rnd+bitexact -i $(TARGET_SAMPLES)/cavs/cavs.mpg -fflags +bitexact -flags +bitexact -sws_flags +accurate_rnd+bitexact -i $(TARGET_SAMPLES)/lena.pnm -an -filter_complex_script $(TARGET_PATH)/tests/data/filtergraphs/colorkey -sws_flags +accurate_rnd+bitexact -fflags +bitexact -flags +bitexact -qscale 2 -frames:v 10
+fate-ffmpeg-filter_colorkey: CMD = framecrc -auto_conversion_filters -idct simple -fflags +bitexact -flags +bitexact  -sws_flags +accurate_rnd+bitexact -i $(TARGET_SAMPLES)/cavs/cavs.mpg -fflags +bitexact -flags +bitexact -sws_flags +accurate_rnd+bitexact -i $(TARGET_SAMPLES)/lena.pnm -an -/filter_complex $(TARGET_PATH)/tests/data/filtergraphs/colorkey -sws_flags +accurate_rnd+bitexact -fflags +bitexact -flags +bitexact -qscale 2 -frames:v 10
 
 FATE_FFMPEG-$(call FILTERFRAMECRC, COLOR) += fate-ffmpeg-lavfi
 fate-ffmpeg-lavfi: CMD = framecrc -lavfi color=d=1:r=5 -fflags +bitexact
@@ -256,3 +256,26 @@ FATE_SAMPLES_FFMPEG-$(call FRAMECRC, MPEGVIDEO, MPEG2VIDEO) += fate-ffmpeg-input
 fate-ffmpeg-error-rate-fail: CMD = ffmpeg -i $(TARGET_SAMPLES)/mkv/h264_tta_undecodable.mkv -c:v copy -f null -; test $$? -eq 69
 fate-ffmpeg-error-rate-pass: CMD = ffmpeg -i $(TARGET_SAMPLES)/mkv/h264_tta_undecodable.mkv -c:v copy -f null - -max_error_rate 1
 FATE_SAMPLES_FFMPEG-$(call ENCDEC, PCM_S16LE TTA, NULL MATROSKA) += fate-ffmpeg-error-rate-fail fate-ffmpeg-error-rate-pass
+
+# test input -bsf
+# use -stream_loop, because it tests flushing bsfs
+fate-ffmpeg-bsf-input: CMD = framecrc -stream_loop 2 -bsf setts=PTS*2 -i $(TARGET_SAMPLES)/hevc/extradata-reload-multi-stsd.mov -c copy
+FATE_SAMPLES_FFMPEG-$(call FRAMECRC, MOV, , SETTS_BSF) += fate-ffmpeg-bsf-input
+
+# Test behaviour when a complex filtergraph returns EOF on one of its inputs,
+# but other inputs are still active.
+# cf. #10803
+fate-ffmpeg-filter-in-eof: tests/data/vsynth_lena.yuv
+fate-ffmpeg-filter-in-eof: CMD = framecrc                                                      \
+    -f rawvideo -s 352x288 -pix_fmt yuv420p -t 1 -i $(TARGET_PATH)/tests/data/vsynth_lena.yuv  \
+    -f rawvideo -s 352x288 -pix_fmt yuv420p -t 1 -i $(TARGET_PATH)/tests/data/vsynth_lena.yuv  \
+    -filter_complex "[0][1]concat" -c:v rawvideo
+FATE_FFMPEG-$(call FRAMECRC, RAWVIDEO, RAWVIDEO, CONCAT_FILTER) += fate-ffmpeg-filter-in-eof
+
+# Test termination on streamcopy with -t as an output option.
+fate-ffmpeg-streamcopy-t: tests/data/vsynth_lena.yuv
+fate-ffmpeg-streamcopy-t: CMP = null
+fate-ffmpeg-streamcopy-t: CMD = ffmpeg                                                                    \
+    -stream_loop -1 -f rawvideo -s 352x288 -pix_fmt yuv420p -i $(TARGET_PATH)/tests/data/vsynth_lena.yuv  \
+    -c copy -f null -t 1 -
+FATE_FFMPEG-$(call REMUX, RAWVIDEO) += fate-ffmpeg-streamcopy-t

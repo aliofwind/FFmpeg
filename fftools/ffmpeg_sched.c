@@ -218,6 +218,7 @@ typedef struct SchMux {
      */
     atomic_int          mux_started;
     ThreadQueue        *queue;
+    unsigned            queue_size;
 
     AVPacket           *sub_heartbeat_pkt;
 } SchMux;
@@ -226,6 +227,7 @@ typedef struct SchFilterIn {
     SchedulerNode       src;
     SchedulerNode       src_sched;
     int                 send_finished;
+    int                 receive_finished;
 } SchFilterIn;
 
 typedef struct SchFilterOut {
@@ -237,7 +239,8 @@ typedef struct SchFilterGraph {
 
     SchFilterIn        *inputs;
     unsigned         nb_inputs;
-    atomic_uint      nb_inputs_finished;
+    atomic_uint      nb_inputs_finished_send;
+    unsigned         nb_inputs_finished_receive;
 
     SchFilterOut       *outputs;
     unsigned         nb_outputs;
@@ -357,6 +360,8 @@ static int queue_alloc(ThreadQueue **ptq, unsigned nb_streams, unsigned queue_si
 {
     ThreadQueue *tq;
     ObjPool *op;
+
+    queue_size = queue_size > 0 ? queue_size : 8;
 
     op = (type == QUEUE_PACKETS) ? objpool_alloc_packets() :
                                    objpool_alloc_frames();
@@ -653,7 +658,7 @@ static const AVClass sch_mux_class = {
 };
 
 int sch_add_mux(Scheduler *sch, SchThreadFunc func, int (*init)(void *),
-                void *arg, int sdp_auto)
+                void *arg, int sdp_auto, unsigned thread_queue_size)
 {
     const unsigned idx = sch->nb_mux;
 
@@ -667,6 +672,7 @@ int sch_add_mux(Scheduler *sch, SchThreadFunc func, int (*init)(void *),
     mux             = &sch->mux[idx];
     mux->class      = &sch_mux_class;
     mux->init       = init;
+    mux->queue_size = thread_queue_size;
 
     task_init(sch, &mux->task, SCH_NODE_TYPE_MUX, idx, func, arg);
 
@@ -773,7 +779,7 @@ int sch_add_dec(Scheduler *sch, SchThreadFunc func, void *ctx,
     if (!dec->send_frame)
         return AVERROR(ENOMEM);
 
-    ret = queue_alloc(&dec->queue, 1, 1, QUEUE_PACKETS);
+    ret = queue_alloc(&dec->queue, 1, 0, QUEUE_PACKETS);
     if (ret < 0)
         return ret;
 
@@ -813,7 +819,7 @@ int sch_add_enc(Scheduler *sch, SchThreadFunc func, void *ctx,
 
     task_init(sch, &enc->task, SCH_NODE_TYPE_ENC, idx, func, ctx);
 
-    ret = queue_alloc(&enc->queue, 1, 1, QUEUE_FRAMES);
+    ret = queue_alloc(&enc->queue, 1, 0, QUEUE_FRAMES);
     if (ret < 0)
         return ret;
 
@@ -861,7 +867,7 @@ int sch_add_filtergraph(Scheduler *sch, unsigned nb_inputs, unsigned nb_outputs,
     if (ret < 0)
         return ret;
 
-    ret = queue_alloc(&fg->queue, fg->nb_inputs + 1, 1, QUEUE_FRAMES);
+    ret = queue_alloc(&fg->queue, fg->nb_inputs + 1, 0, QUEUE_FRAMES);
     if (ret < 0)
         return ret;
 
@@ -1313,7 +1319,8 @@ int sch_start(Scheduler *sch)
             }
         }
 
-        ret = queue_alloc(&mux->queue, mux->nb_streams, 1, QUEUE_PACKETS);
+        ret = queue_alloc(&mux->queue, mux->nb_streams, mux->queue_size,
+                          QUEUE_PACKETS);
         if (ret < 0)
             return ret;
 
@@ -1534,28 +1541,31 @@ static int send_to_enc_sq(Scheduler *sch, SchEnc *enc, AVFrame *frame)
         // TODO: the SQ API should be extended to allow returning EOF
         // for individual streams
         ret = sq_receive(sq->sq, -1, SQFRAME(sq->frame));
-        if (ret == AVERROR(EAGAIN)) {
-            ret = 0;
-            goto finish;
-        } else if (ret < 0) {
-            // close all encoders fed from this sync queue
-            for (unsigned i = 0; i < sq->nb_enc_idx; i++) {
-                int err = send_to_enc_thread(sch, &sch->enc[sq->enc_idx[i]], NULL);
-
-                // if the sync queue error is EOF and closing the encoder
-                // produces a more serious error, make sure to pick the latter
-                ret = err_merge((ret == AVERROR_EOF && err < 0) ? 0 : ret, err);
-            }
-            goto finish;
+        if (ret < 0) {
+            ret = (ret == AVERROR(EAGAIN)) ? 0 : ret;
+            break;
         }
 
         enc = &sch->enc[sq->enc_idx[ret]];
         ret = send_to_enc_thread(sch, enc, sq->frame);
         if (ret < 0) {
-            av_assert0(ret == AVERROR_EOF);
             av_frame_unref(sq->frame);
+            if (ret != AVERROR_EOF)
+                break;
+
             sq_send(sq->sq, enc->sq_idx[1], SQFRAME(NULL));
             continue;
+        }
+    }
+
+    if (ret < 0) {
+        // close all encoders fed from this sync queue
+        for (unsigned i = 0; i < sq->nb_enc_idx; i++) {
+            int err = send_to_enc_thread(sch, &sch->enc[sq->enc_idx[i]], NULL);
+
+            // if the sync queue error is EOF and closing the encoder
+            // produces a more serious error, make sure to pick the latter
+            ret = err_merge((ret == AVERROR_EOF && err < 0) ? 0 : ret, err);
         }
     }
 
@@ -1959,7 +1969,7 @@ static int send_to_filter(Scheduler *sch, SchFilterGraph *fg,
         tq_send_finish(fg->queue, in_idx);
 
         // close the control stream when all actual inputs are done
-        if (atomic_fetch_add(&fg->nb_inputs_finished, 1) == fg->nb_inputs - 1)
+        if (atomic_fetch_add(&fg->nb_inputs_finished_send, 1) == fg->nb_inputs - 1)
             tq_send_finish(fg->queue, fg->nb_inputs);
     }
     return 0;
@@ -2028,13 +2038,11 @@ int sch_dec_send(Scheduler *sch, unsigned dec_idx, AVFrame *frame)
                 ret = 0;
                 continue;
             }
-            goto finish;
+            return ret;
         }
     }
 
-finish:
-    return ret < 0                  ? ret :
-           (nb_done == dec->nb_dst) ? AVERROR_EOF : 0;
+    return (nb_done == dec->nb_dst) ? AVERROR_EOF : 0;
 }
 
 static int dec_done(Scheduler *sch, unsigned dec_idx)
@@ -2140,6 +2148,27 @@ int sch_filter_receive(Scheduler *sch, unsigned fg_idx,
 
         // disregard EOFs for specific streams - they should always be
         // preceded by an EOF frame
+    }
+}
+
+void sch_filter_receive_finish(Scheduler *sch, unsigned fg_idx, unsigned in_idx)
+{
+    SchFilterGraph *fg;
+    SchFilterIn    *fi;
+
+    av_assert0(fg_idx < sch->nb_filters);
+    fg = &sch->filters[fg_idx];
+
+    av_assert0(in_idx < fg->nb_inputs);
+    fi = &fg->inputs[in_idx];
+
+    if (!fi->receive_finished) {
+        fi->receive_finished = 1;
+        tq_receive_finish(fg->queue, in_idx);
+
+        // close the control stream when all actual inputs are done
+        if (++fg->nb_inputs_finished_receive == fg->nb_inputs)
+            tq_receive_finish(fg->queue, fg->nb_inputs);
     }
 }
 

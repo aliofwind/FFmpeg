@@ -546,6 +546,9 @@ redo:
     } else if (es_type == STREAM_TYPE_VIDEO_HEVC) {
         codec_id = AV_CODEC_ID_HEVC;
         type     = AVMEDIA_TYPE_VIDEO;
+    } else if (es_type == STREAM_TYPE_VIDEO_VVC) {
+        codec_id = AV_CODEC_ID_VVC;
+        type     = AVMEDIA_TYPE_VIDEO;
     } else if (es_type == STREAM_TYPE_AUDIO_AC3) {
         codec_id = AV_CODEC_ID_AC3;
         type     = AVMEDIA_TYPE_AUDIO;
@@ -1040,6 +1043,7 @@ static const AVOption options[] = {
 
 static const AVClass vobsub_demuxer_class = {
     .class_name = "vobsub",
+    .item_name  = av_default_item_name,
     .option     = options,
     .version    = LIBAVUTIL_VERSION_INT,
 };

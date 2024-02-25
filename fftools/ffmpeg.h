@@ -62,6 +62,7 @@
 #define FFMPEG_OPT_FORCE_KF_SOURCE_NO_DROP 1
 #define FFMPEG_OPT_VSYNC_DROP 1
 #define FFMPEG_OPT_VSYNC 1
+#define FFMPEG_OPT_FILTER_SCRIPT 1
 
 #define FFMPEG_ERROR_RATE_EXCEEDED FFERRTAG('E', 'R', 'E', 'D')
 
@@ -220,7 +221,9 @@ typedef struct OptionsContext {
     SpecifierOptList copy_initial_nonkeyframes;
     SpecifierOptList copy_prior_start;
     SpecifierOptList filters;
+#if FFMPEG_OPT_FILTER_SCRIPT
     SpecifierOptList filter_scripts;
+#endif
     SpecifierOptList reinit_filters;
     SpecifierOptList fix_sub_duration;
     SpecifierOptList fix_sub_duration_heartbeat;
@@ -246,6 +249,32 @@ typedef struct OptionsContext {
     SpecifierOptList enc_stats_post_fmt;
     SpecifierOptList mux_stats_fmt;
 } OptionsContext;
+
+enum IFilterFlags {
+    IFILTER_FLAG_AUTOROTATE     = (1 << 0),
+    IFILTER_FLAG_REINIT         = (1 << 1),
+    IFILTER_FLAG_CFR            = (1 << 2),
+};
+
+typedef struct InputFilterOptions {
+    int64_t             trim_start_us;
+    int64_t             trim_end_us;
+
+    uint8_t            *name;
+
+    /* When IFILTER_FLAG_CFR is set, the stream is guaranteed to be CFR with
+     * this framerate.
+     *
+     * Otherwise, this is an estimate that should not be relied upon to be
+     * accurate */
+    AVRational          framerate;
+
+    int                 sub2video_width;
+    int                 sub2video_height;
+
+    // a combination of IFILTER_FLAG_*
+    unsigned            flags;
+} InputFilterOptions;
 
 typedef struct InputFilter {
     struct FilterGraph *graph;
@@ -277,52 +306,87 @@ typedef struct FilterGraph {
     int         nb_outputs;
 } FilterGraph;
 
-typedef struct Decoder Decoder;
+enum DecoderFlags {
+    DECODER_FLAG_FIX_SUB_DURATION = (1 << 0),
+    // input timestamps are unreliable (guessed by demuxer)
+    DECODER_FLAG_TS_UNRELIABLE    = (1 << 1),
+    // decoder should override timestamps by fixed framerate
+    // from DecoderOpts.framerate
+    DECODER_FLAG_FRAMERATE_FORCED = (1 << 2),
+#if FFMPEG_OPT_TOP
+    DECODER_FLAG_TOP_FIELD_FIRST  = (1 << 3),
+#endif
+    DECODER_FLAG_SEND_END_TS      = (1 << 4),
+};
+
+typedef struct DecoderOpts {
+    int                         flags;
+
+    char                       *name;
+    void                       *log_parent;
+
+    const AVCodec              *codec;
+    const AVCodecParameters    *par;
+
+    /* hwaccel options */
+    enum HWAccelID              hwaccel_id;
+    enum AVHWDeviceType         hwaccel_device_type;
+    char                       *hwaccel_device;
+    enum AVPixelFormat          hwaccel_output_format;
+
+    AVRational                  time_base;
+
+    // Either forced (when DECODER_FLAG_FRAMERATE_FORCED is set) or
+    // estimated (otherwise) video framerate.
+    AVRational                  framerate;
+} DecoderOpts;
+
+typedef struct Decoder {
+    const AVClass   *class;
+
+    const uint8_t   *subtitle_header;
+    int              subtitle_header_size;
+
+    // number of frames/samples retrieved from the decoder
+    uint64_t         frames_decoded;
+    uint64_t         samples_decoded;
+    uint64_t         decode_errors;
+} Decoder;
 
 typedef struct InputStream {
-    const AVClass *class;
+    const AVClass        *class;
 
     /* parent source */
-    struct InputFile *file;
+    struct InputFile     *file;
 
-    int index;
+    int                   index;
 
-    AVStream *st;
-    int user_set_discard;
-    int decoding_needed;     /* non zero if the packets must be decoded in 'raw_fifo', see DECODING_FOR_* */
-#define DECODING_FOR_OST    1
-#define DECODING_FOR_FILTER 2
+    AVStream             *st;
+    int                   user_set_discard;
 
     /**
      * Codec parameters - to be used by the decoding/streamcopy code.
      * st->codecpar should not be accessed, because it may be modified
      * concurrently by the demuxing thread.
      */
-    AVCodecParameters *par;
-    Decoder *decoder;
-    AVCodecContext *dec_ctx;
-    const AVCodec *dec;
+    AVCodecParameters    *par;
+    Decoder              *decoder;
+    const AVCodec        *dec;
 
-    AVRational framerate_guessed;
-
-    AVDictionary *decoder_opts;
-    AVRational framerate;               /* framerate forced with -r */
+    /* framerate forced with -r */
+    AVRational            framerate;
 #if FFMPEG_OPT_TOP
-    int top_field_first;
+    int                   top_field_first;
 #endif
 
-    int autorotate;
+    int                   autorotate;
 
-    int fix_sub_duration;
-
-    struct sub2video {
-        int w, h;
-    } sub2video;
+    int                   fix_sub_duration;
 
     /* decoded data from this stream goes into all those filters
      * currently video and audio only */
-    InputFilter **filters;
-    int        nb_filters;
+    InputFilter         **filters;
+    int                nb_filters;
 
     /*
      * Output targets that do not go through lavfi, i.e. subtitles or
@@ -331,48 +395,29 @@ typedef struct InputStream {
      */
     struct OutputStream **outputs;
     int                nb_outputs;
-
-    int reinit_filters;
-
-    /* hwaccel options */
-    enum HWAccelID hwaccel_id;
-    enum AVHWDeviceType hwaccel_device_type;
-    char  *hwaccel_device;
-    enum AVPixelFormat hwaccel_output_format;
-
-    /* stats */
-    // number of frames/samples retrieved from the decoder
-    uint64_t frames_decoded;
-    uint64_t samples_decoded;
-    uint64_t decode_errors;
 } InputStream;
 
 typedef struct InputFile {
-    const AVClass *class;
+    const AVClass   *class;
 
-    int index;
-
-    // input format has no timestamps
-    int format_nots;
+    int              index;
 
     AVFormatContext *ctx;
-    int64_t input_ts_offset;
-    int input_sync_ref;
+    int64_t          input_ts_offset;
+    int              input_sync_ref;
     /**
      * Effective format start time based on enabled streams.
      */
-    int64_t start_time_effective;
-    int64_t ts_offset;
-    int64_t start_time;   /* user-specified start time in AV_TIME_BASE or AV_NOPTS_VALUE */
-    int64_t recording_time;
+    int64_t          start_time_effective;
+    int64_t          ts_offset;
+    /* user-specified start time in AV_TIME_BASE or AV_NOPTS_VALUE */
+    int64_t          start_time;
 
     /* streams that ffmpeg is aware of;
      * there may be extra streams in ctx that are not mapped to an InputStream
      * if new streams appear dynamically during demuxing */
-    InputStream **streams;
-    int        nb_streams;
-
-    int accurate_seek;
+    InputStream    **streams;
+    int           nb_streams;
 } InputFile;
 
 enum forced_keyframes_const {
@@ -525,7 +570,7 @@ typedef struct OutputStream {
     AVDictionary *swr_opts;
     char *apad;
 
-    const char *attachment_filename;
+    char *attachment_filename;
 
     int keep_pix_fmt;
 
@@ -652,7 +697,6 @@ void remove_avoptions(AVDictionary **a, AVDictionary *b);
 int check_avoptions(AVDictionary *m);
 
 int assert_file_overwrite(const char *filename);
-char *file_read(const char *filename);
 AVDictionary *strip_specifiers(const AVDictionary *dict);
 int find_codec(void *logctx, const char *name,
                enum AVMediaType type, int encoder, const AVCodec **codec);
@@ -664,9 +708,6 @@ int init_simple_filtergraph(InputStream *ist, OutputStream *ost,
                             char *graph_desc,
                             Scheduler *sch, unsigned sch_idx_enc);
 int init_complex_filtergraph(FilterGraph *fg);
-
-int copy_av_subtitle(AVSubtitle *dst, const AVSubtitle *src);
-int subtitle_wrap_frame(AVFrame *frame, AVSubtitle *subtitle, int copy);
 
 /**
  * Get our axiliary frame data attached to the frame, allocating it
@@ -723,10 +764,18 @@ void hw_device_free_all(void);
  */
 AVBufferRef *hw_device_for_filter(void);
 
-int hwaccel_retrieve_data(AVCodecContext *avctx, AVFrame *input);
-
-int dec_open(InputStream *ist, Scheduler *sch, unsigned sch_idx);
+/**
+ * @param dec_opts Dictionary filled with decoder options. Its ownership
+ *                 is transferred to the decoder.
+ *
+ * @retval ">=0" non-negative scheduler index on success
+ * @retval "<0"  an error code on failure
+ */
+int dec_open(Decoder **pdec, Scheduler *sch,
+             AVDictionary **dec_opts, const DecoderOpts *o);
 void dec_free(Decoder **pdec);
+
+int dec_add_filter(Decoder *dec, InputFilter *ifilter);
 
 int enc_alloc(Encoder **penc, const AVCodec *codec,
               Scheduler *sch, unsigned sch_idx);
@@ -753,7 +802,8 @@ int ifile_open(const OptionsContext *o, const char *filename, Scheduler *sch);
 void ifile_close(InputFile **f);
 
 int ist_output_add(InputStream *ist, OutputStream *ost);
-int ist_filter_add(InputStream *ist, InputFilter *ifilter, int is_simple);
+int ist_filter_add(InputStream *ist, InputFilter *ifilter, int is_simple,
+                   InputFilterOptions *opts);
 
 /**
  * Find an unused input stream of given type.
@@ -812,7 +862,6 @@ const char *opt_match_per_type_str(const SpecifierOptList *sol,
                                    char mediatype);
 
 void *muxer_thread(void *arg);
-void *decoder_thread(void *arg);
 void *encoder_thread(void *arg);
 
 #endif /* FFTOOLS_FFMPEG_H */
