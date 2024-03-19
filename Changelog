@@ -27,6 +27,15 @@ version <next>:
 - a C11-compliant compiler is now required; note that this requirement
   will be bumped to C17 in the near future, so consider updating your
   build environment if it lacks C17 support
+- Change the default bitrate control method from VBR to CQP for QSV encoders.
+- removed deprecated ffmpeg CLI options -psnr and -map_channel
+- DVD-Video demuxer, powered by libdvdnav and libdvdread
+- ffprobe -show_stream_groups option
+- ffprobe (with -export_side_data film_grain) now prints film grain metadata
+- AEA muxer
+- ffmpeg CLI loopback decoders
+- Support PacketTypeMetadata of PacketType in enhanced flv format
+
 
 version 6.1:
 - libaribcaption decoder

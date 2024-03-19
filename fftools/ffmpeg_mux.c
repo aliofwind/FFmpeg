@@ -404,7 +404,7 @@ fail:
     return AVERROR(ENOMEM);
 }
 
-void *muxer_thread(void *arg)
+int muxer_thread(void *arg)
 {
     Muxer     *mux = arg;
     OutputFile *of = &mux->of;
@@ -433,6 +433,7 @@ void *muxer_thread(void *arg)
 
         ost = of->streams[mux->sch_stream_idx[stream_idx]];
         mt.pkt->stream_index = ost->index;
+        mt.pkt->flags       &= ~AV_PKT_FLAG_TRUSTED;
 
         ret = mux_packet_filter(mux, &mt, ost, ret < 0 ? NULL : mt.pkt, &stream_eof);
         av_packet_unref(mt.pkt);
@@ -453,7 +454,7 @@ void *muxer_thread(void *arg)
 finish:
     mux_thread_uninit(&mt);
 
-    return (void*)(intptr_t)ret;
+    return ret;
 }
 
 static int of_streamcopy(OutputFile *of, OutputStream *ost, AVPacket *pkt)
@@ -506,14 +507,14 @@ int print_sdp(const char *filename);
 int print_sdp(const char *filename)
 {
     char sdp[16384];
-    int j, ret;
+    int j = 0, ret;
     AVIOContext *sdp_pb;
     AVFormatContext **avc;
 
     avc = av_malloc_array(nb_output_files, sizeof(*avc));
     if (!avc)
         return AVERROR(ENOMEM);
-    for (int i = 0, j = 0; i < nb_output_files; i++) {
+    for (int i = 0; i < nb_output_files; i++) {
         if (!strcmp(output_files[i]->format->name, "rtp")) {
             avc[j] = mux_from_of(output_files[i])->fc;
             j++;
@@ -817,11 +818,6 @@ static void ost_free(OutputStream **post)
     av_freep(&ost->apad);
 
     av_freep(&ost->attachment_filename);
-
-#if FFMPEG_OPT_MAP_CHANNEL
-    av_freep(&ost->audio_channels_map);
-    ost->audio_channels_mapped = 0;
-#endif
 
     av_dict_free(&ost->sws_dict);
     av_dict_free(&ost->swr_opts);

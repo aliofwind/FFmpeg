@@ -51,10 +51,6 @@
 #include "libswresample/swresample.h"
 
 // deprecated features
-#define FFMPEG_OPT_PSNR 1
-#define FFMPEG_OPT_MAP_CHANNEL 1
-#define FFMPEG_OPT_MAP_SYNC 1
-#define FFMPEG_ROTATION_METADATA 1
 #define FFMPEG_OPT_QPHIST 1
 #define FFMPEG_OPT_ADRIFT_THRESHOLD 1
 #define FFMPEG_OPT_ENC_TIME_BASE_NUM 1
@@ -124,13 +120,6 @@ typedef struct StreamMap {
     char *linklabel;       /* name of an output link, for mapping lavfi outputs */
 } StreamMap;
 
-#if FFMPEG_OPT_MAP_CHANNEL
-typedef struct {
-    int  file_idx,  stream_idx,  channel_idx; // input
-    int ofile_idx, ostream_idx;               // output
-} AudioChannelMap;
-#endif
-
 typedef struct OptionsContext {
     OptionGroup *g;
 
@@ -170,10 +159,6 @@ typedef struct OptionsContext {
     /* output options */
     StreamMap *stream_maps;
     int     nb_stream_maps;
-#if FFMPEG_OPT_MAP_CHANNEL
-    AudioChannelMap *audio_channel_maps; /* one info entry per -map_channel */
-    int           nb_audio_channel_maps; /* number of (valid) -map_channel settings */
-#endif
     const char **attachments;
     int       nb_attachments;
 
@@ -274,6 +259,8 @@ typedef struct InputFilterOptions {
 
     // a combination of IFILTER_FLAG_*
     unsigned            flags;
+
+    AVFrame            *fallback;
 } InputFilterOptions;
 
 typedef struct InputFilter {
@@ -343,6 +330,8 @@ typedef struct DecoderOpts {
 
 typedef struct Decoder {
     const AVClass   *class;
+
+    enum AVMediaType type;
 
     const uint8_t   *subtitle_header;
     int              subtitle_header_size;
@@ -540,25 +529,13 @@ typedef struct OutputStream {
 #if FFMPEG_OPT_TOP
     int top_field_first;
 #endif
-#if FFMPEG_ROTATION_METADATA
-    int rotate_overridden;
-#endif
     int autoscale;
     int bitexact;
     int bits_per_raw_sample;
-#if FFMPEG_ROTATION_METADATA
-    double rotate_override_value;
-#endif
 
     AVRational frame_aspect_ratio;
 
     KeyframeForceCtx kf;
-
-    /* audio only */
-#if FFMPEG_OPT_MAP_CHANNEL
-    int *audio_channels_map;             /* list of the channels id to pick from the source stream */
-    int audio_channels_mapped;           /* number of channels in audio_channels_map */
-#endif
 
     char *logfile_prefix;
     FILE *logfile;
@@ -631,6 +608,8 @@ typedef struct FrameData {
     int        bits_per_raw_sample;
 
     int64_t wallclock[LATENCY_PROBE_NB];
+
+    AVCodecParameters *par_enc;
 } FrameData;
 
 extern InputFile   **input_files;
@@ -641,6 +620,10 @@ extern int         nb_output_files;
 
 extern FilterGraph **filtergraphs;
 extern int        nb_filtergraphs;
+
+// standalone decoders (not tied to demuxed streams)
+extern Decoder     **decoders;
+extern int        nb_decoders;
 
 extern char *vstats_filename;
 
@@ -684,10 +667,6 @@ extern int recast_media;
 
 extern FILE *vstats_file;
 
-#if FFMPEG_OPT_PSNR
-extern int do_psnr;
-#endif
-
 void term_init(void);
 void term_exit(void);
 
@@ -702,12 +681,11 @@ int find_codec(void *logctx, const char *name,
                enum AVMediaType type, int encoder, const AVCodec **codec);
 int parse_and_set_vsync(const char *arg, int *vsync_var, int file_idx, int st_idx, int is_global);
 
-int check_filter_outputs(void);
 int filtergraph_is_simple(const FilterGraph *fg);
 int init_simple_filtergraph(InputStream *ist, OutputStream *ost,
                             char *graph_desc,
                             Scheduler *sch, unsigned sch_idx_enc);
-int init_complex_filtergraph(FilterGraph *fg);
+int fg_finalise_bindings(FilterGraph *fg);
 
 /**
  * Get our axiliary frame data attached to the frame, allocating it
@@ -765,23 +743,38 @@ void hw_device_free_all(void);
 AVBufferRef *hw_device_for_filter(void);
 
 /**
+ * Create a standalone decoder.
+ */
+int dec_create(const OptionsContext *o, const char *arg, Scheduler *sch);
+
+/**
  * @param dec_opts Dictionary filled with decoder options. Its ownership
  *                 is transferred to the decoder.
+ * @param param_out If non-NULL, media properties after opening the decoder
+ *                  are written here.
  *
  * @retval ">=0" non-negative scheduler index on success
  * @retval "<0"  an error code on failure
  */
-int dec_open(Decoder **pdec, Scheduler *sch,
-             AVDictionary **dec_opts, const DecoderOpts *o);
+int dec_init(Decoder **pdec, Scheduler *sch,
+             AVDictionary **dec_opts, const DecoderOpts *o,
+             AVFrame *param_out);
 void dec_free(Decoder **pdec);
 
-int dec_add_filter(Decoder *dec, InputFilter *ifilter);
+/*
+ * Called by filters to connect decoder's output to given filtergraph input.
+ *
+ * @param opts filtergraph input options, to be filled by this function
+ */
+int dec_filter_add(Decoder *dec, InputFilter *ifilter, InputFilterOptions *opts);
 
 int enc_alloc(Encoder **penc, const AVCodec *codec,
               Scheduler *sch, unsigned sch_idx);
 void enc_free(Encoder **penc);
 
 int enc_open(void *opaque, const AVFrame *frame);
+
+int enc_loopback(Encoder *enc);
 
 /*
  * Initialize muxing state for the given stream, should be called
@@ -861,7 +854,7 @@ void update_benchmark(const char *fmt, ...);
 const char *opt_match_per_type_str(const SpecifierOptList *sol,
                                    char mediatype);
 
-void *muxer_thread(void *arg);
-void *encoder_thread(void *arg);
+int muxer_thread(void *arg);
+int encoder_thread(void *arg);
 
 #endif /* FFTOOLS_FFMPEG_H */

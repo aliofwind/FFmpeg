@@ -865,11 +865,6 @@ static int hls_mux_init(AVFormatContext *s, VariantStream *vs)
     oc->max_delay                = s->max_delay;
     oc->opaque                   = s->opaque;
     oc->io_open                  = s->io_open;
-#if FF_API_AVFORMAT_IO_CLOSE
-FF_DISABLE_DEPRECATION_WARNINGS
-    oc->io_close                 = s->io_close;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
     oc->io_close2                = s->io_close2;
     oc->strict_std_compliance    = s->strict_std_compliance;
     av_dict_copy(&oc->metadata, s->metadata, 0);
@@ -1878,18 +1873,23 @@ fail:
 
 static const char * get_default_pattern_localtime_fmt(AVFormatContext *s)
 {
+    HLSContext *hls = s->priv_data;
+#if HAVE_LIBC_MSVCRT
+    // no %s support on MSVC, which invokes the invalid parameter handler
+    // on unsupported format strings, instead of returning an error
+    int strftime_s_supported = 0;
+#else
     char b[21];
     time_t t = time(NULL);
-    struct tm *p, tmbuf;
-    HLSContext *hls = s->priv_data;
-
-    p = localtime_r(&t, &tmbuf);
+    struct tm tmbuf, *p = localtime_r(&t, &tmbuf);
     // no %s support when strftime returned error or left format string unchanged
-    // also no %s support on MSVC, which invokes the invalid parameter handler on unsupported format strings, instead of returning an error
+    int strftime_s_supported = strftime(b, sizeof(b), "%s", p) && strcmp(b, "%s");
+#endif
+
     if (hls->segment_type == SEGMENT_TYPE_FMP4) {
-        return (HAVE_LIBC_MSVCRT || !strftime(b, sizeof(b), "%s", p) || !strcmp(b, "%s")) ? "-%Y%m%d%H%M%S.m4s" : "-%s.m4s";
+        return strftime_s_supported ? "-%s.m4s" : "-%Y%m%d%H%M%S.m4s";
     }
-    return (HAVE_LIBC_MSVCRT || !strftime(b, sizeof(b), "%s", p) || !strcmp(b, "%s")) ? "-%Y%m%d%H%M%S.ts" : "-%s.ts";
+    return strftime_s_supported ? "-%s.ts" : "-%Y%m%d%H%M%S.ts";
 }
 
 static int append_postfix(char *name, int name_buf_len, int i)
@@ -2367,7 +2367,7 @@ static int hls_write_header(AVFormatContext *s)
         }
     }
 
-    return ret;
+    return 0;
 }
 
 static int hls_init_file_resend(AVFormatContext *s, VariantStream *vs)

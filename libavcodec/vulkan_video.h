@@ -19,7 +19,6 @@
 #ifndef AVCODEC_VULKAN_VIDEO_H
 #define AVCODEC_VULKAN_VIDEO_H
 
-#include "codec_id.h"
 #include "vulkan.h"
 
 #include <vk_video/vulkan_video_codecs_common.h>
@@ -31,13 +30,6 @@
 #define CODEC_VER_PAT(ver) (ver & ((1 << 12) - 1))
 #define CODEC_VER(ver) CODEC_VER_MAJ(ver), CODEC_VER_MIN(ver), CODEC_VER_PAT(ver)
 
-typedef struct FFVkCodecMap {
-    FFVulkanExtensions               encode_extension;
-    VkVideoCodecOperationFlagBitsKHR encode_op;
-    FFVulkanExtensions               decode_extension;
-    VkVideoCodecOperationFlagBitsKHR decode_op;
-} FFVkCodecMap;
-
 typedef struct FFVkVideoSession {
     VkVideoSessionKHR session;
     VkDeviceMemory *mem;
@@ -45,11 +37,6 @@ typedef struct FFVkVideoSession {
 
     AVBufferPool *buf_pool;
 } FFVkVideoCommon;
-
-/**
- * Index is codec_id.
- */
-extern const FFVkCodecMap ff_vk_codec_map[AV_CODEC_ID_FIRST_AUDIO];
 
 /**
  * Get pixfmt from a Vulkan format.

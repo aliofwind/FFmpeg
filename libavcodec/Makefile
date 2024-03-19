@@ -25,7 +25,6 @@ HEADERS = ac3_parser.h                                                  \
           version_major.h                                               \
           videotoolbox.h                                                \
           vorbis_parser.h                                               \
-          xvmc.h                                                        \
 
 OBJS = ac3_parser.o                                                     \
        adts_parser.o                                                    \
@@ -65,7 +64,7 @@ OBJS = ac3_parser.o                                                     \
 
 # subsystems
 include $(SRC_PATH)/libavcodec/vvc/Makefile
-include $(SRC_PATH)/libavcodec/x86/vvc/Makefile
+-include $(SRC_PATH)/libavcodec/$(ARCH)/vvc/Makefile
 OBJS-$(CONFIG_AANDCTTABLES)            += aandcttab.o
 OBJS-$(CONFIG_AC3DSP)                  += ac3dsp.o ac3.o ac3tab.o
 OBJS-$(CONFIG_ADTS_HEADER)             += adts_header.o mpeg4audio_sample_rates.o
@@ -85,7 +84,6 @@ OBJS-$(CONFIG_CBS_JPEG)                += cbs_jpeg.o
 OBJS-$(CONFIG_CBS_MPEG2)               += cbs_mpeg2.o
 OBJS-$(CONFIG_CBS_VP8)                 += cbs_vp8.o vp8data.o
 OBJS-$(CONFIG_CBS_VP9)                 += cbs_vp9.o
-OBJS-$(CONFIG_CRYSTALHD)               += crystalhd.o
 OBJS-$(CONFIG_DEFLATE_WRAPPER)         += zlib_wrapper.o
 OBJS-$(CONFIG_DOVI_RPU)                += dovi_rpu.o
 OBJS-$(CONFIG_ERROR_RESILIENCE)        += error_resilience.o
@@ -254,7 +252,7 @@ OBJS-$(CONFIG_ATRAC3PAL_DECODER)       += atrac3plusdec.o atrac3plus.o \
 OBJS-$(CONFIG_ATRAC9_DECODER)          += atrac9dec.o
 OBJS-$(CONFIG_AURA_DECODER)            += cyuv.o
 OBJS-$(CONFIG_AURA2_DECODER)           += aura.o
-OBJS-$(CONFIG_AV1_DECODER)             += av1dec.o
+OBJS-$(CONFIG_AV1_DECODER)             += av1dec.o av1_parse.o
 OBJS-$(CONFIG_AV1_CUVID_DECODER)       += cuviddec.o
 OBJS-$(CONFIG_AV1_MEDIACODEC_DECODER)  += mediacodecdec.o
 OBJS-$(CONFIG_AV1_MEDIACODEC_ENCODER)  += mediacodecenc.o
@@ -451,8 +449,7 @@ OBJS-$(CONFIG_HEVC_V4L2M2M_DECODER)    += v4l2_m2m_dec.o
 OBJS-$(CONFIG_HEVC_V4L2M2M_ENCODER)    += v4l2_m2m_enc.o
 OBJS-$(CONFIG_HEVC_VIDEOTOOLBOX_ENCODER) += videotoolboxenc.o
 OBJS-$(CONFIG_HNM4_VIDEO_DECODER)      += hnm4video.o
-OBJS-$(CONFIG_HQ_HQA_DECODER)          += hq_hqa.o hq_hqadata.o hq_hqadsp.o \
-                                          canopus.o
+OBJS-$(CONFIG_HQ_HQA_DECODER)          += hq_hqa.o hq_hqadsp.o canopus.o
 OBJS-$(CONFIG_HQX_DECODER)             += hqx.o hqxvlc.o hqxdsp.o canopus.o
 OBJS-$(CONFIG_HUFFYUV_DECODER)         += huffyuv.o huffyuvdec.o
 OBJS-$(CONFIG_HUFFYUV_ENCODER)         += huffyuv.o huffyuvenc.o
@@ -1240,7 +1237,6 @@ OBJS-$(CONFIG_EXTRACT_EXTRADATA_BSF)      += av1_parse.o h2645_parse.o
 OBJS-$(CONFIG_H264_METADATA_BSF)          += h264_levels.o h2645data.o
 OBJS-$(CONFIG_HAPQA_EXTRACT_BSF)          += hap.o
 OBJS-$(CONFIG_HEVC_METADATA_BSF)          += h265_profile_level.o h2645data.o
-OBJS-$(CONFIG_MP3_HEADER_DECOMPRESS_BSF)  += mpegaudiotabs.o
 OBJS-$(CONFIG_REMOVE_EXTRADATA_BSF)       += av1_parse.o
 OBJS-$(CONFIG_TRUEHD_CORE_BSF)            += mlp_parse.o mlp.o
 
@@ -1281,7 +1277,6 @@ SKIPHEADERS-$(CONFIG_NVDEC)            += nvdec.h
 SKIPHEADERS-$(CONFIG_NVENC)            += nvenc.h
 SKIPHEADERS-$(CONFIG_QSV)              += qsv.h qsv_internal.h
 SKIPHEADERS-$(CONFIG_QSVENC)           += qsvenc.h
-SKIPHEADERS-$(CONFIG_XVMC)             += xvmc.h
 SKIPHEADERS-$(CONFIG_VAAPI)            += vaapi_decode.h vaapi_hevc.h vaapi_encode.h
 SKIPHEADERS-$(CONFIG_VDPAU)            += vdpau.h vdpau_internal.h
 SKIPHEADERS-$(CONFIG_VIDEOTOOLBOX)     += videotoolbox.h vt_internal.h
