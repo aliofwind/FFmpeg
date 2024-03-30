@@ -54,6 +54,7 @@
 #include "libavcodec/bytestream.h"
 #include "libavcodec/defs.h"
 #include "libavcodec/flac.h"
+#include "libavcodec/itut35.h"
 #include "libavcodec/mpeg4audio.h"
 #include "libavcodec/packet_internal.h"
 
@@ -3194,6 +3195,10 @@ static int matroska_parse_tracks(AVFormatContext *s)
                    track->time_scale);
             track->time_scale = 1.0;
         }
+
+        if (matroska->time_scale * track->time_scale > UINT_MAX)
+            return AVERROR_INVALIDDATA;
+
         avpriv_set_pts_info(st, 64, matroska->time_scale * track->time_scale,
                             1000 * 1000 * 1000);    /* 64 bit pts in ns */
 
@@ -3884,7 +3889,8 @@ static int matroska_parse_block_additional(MatroskaDemuxContext *matroska,
         country_code  = bytestream2_get_byteu(&bc);
         provider_code = bytestream2_get_be16u(&bc);
 
-        if (country_code != 0xB5 || provider_code != 0x3C)
+        if (country_code != ITU_T_T35_COUNTRY_CODE_US ||
+            provider_code != ITU_T_T35_PROVIDER_CODE_SMTPE)
             break; // ignore
 
         provider_oriented_code = bytestream2_get_be16u(&bc);
@@ -4790,7 +4796,7 @@ const FFInputFormat ff_webm_dash_manifest_demuxer = {
     .p.long_name    = NULL_IF_CONFIG_SMALL("WebM DASH Manifest"),
     .p.priv_class   = &webm_dash_class,
     .priv_data_size = sizeof(MatroskaDemuxContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_header    = webm_dash_manifest_read_header,
     .read_packet    = webm_dash_manifest_read_packet,
     .read_close     = matroska_read_close,
@@ -4803,7 +4809,7 @@ const FFInputFormat ff_matroska_demuxer = {
     .p.extensions   = "mkv,mk3d,mka,mks,webm",
     .p.mime_type    = "audio/webm,audio/x-matroska,video/webm,video/x-matroska",
     .priv_data_size = sizeof(MatroskaDemuxContext),
-    .flags_internal = FF_FMT_INIT_CLEANUP,
+    .flags_internal = FF_INFMT_FLAG_INIT_CLEANUP,
     .read_probe     = matroska_probe,
     .read_header    = matroska_read_header,
     .read_packet    = matroska_read_packet,

@@ -28,6 +28,36 @@
 #include "samplefmt.h"
 #include "hwcontext.h"
 
+static const AVSideDataDescriptor sd_props[] = {
+    [AV_FRAME_DATA_PANSCAN]                     = { "AVPanScan" },
+    [AV_FRAME_DATA_A53_CC]                      = { "ATSC A53 Part 4 Closed Captions" },
+    [AV_FRAME_DATA_MATRIXENCODING]              = { "AVMatrixEncoding" },
+    [AV_FRAME_DATA_DOWNMIX_INFO]                = { "Metadata relevant to a downmix procedure" },
+    [AV_FRAME_DATA_AFD]                         = { "Active format description" },
+    [AV_FRAME_DATA_MOTION_VECTORS]              = { "Motion vectors" },
+    [AV_FRAME_DATA_SKIP_SAMPLES]                = { "Skip samples" },
+    [AV_FRAME_DATA_GOP_TIMECODE]                = { "GOP timecode" },
+    [AV_FRAME_DATA_S12M_TIMECODE]               = { "SMPTE 12-1 timecode" },
+    [AV_FRAME_DATA_DYNAMIC_HDR_PLUS]            = { "HDR Dynamic Metadata SMPTE2094-40 (HDR10+)" },
+    [AV_FRAME_DATA_DYNAMIC_HDR_VIVID]           = { "HDR Dynamic Metadata CUVA 005.1 2021 (Vivid)" },
+    [AV_FRAME_DATA_REGIONS_OF_INTEREST]         = { "Regions Of Interest" },
+    [AV_FRAME_DATA_VIDEO_ENC_PARAMS]            = { "Video encoding parameters" },
+    [AV_FRAME_DATA_FILM_GRAIN_PARAMS]           = { "Film grain parameters" },
+    [AV_FRAME_DATA_DETECTION_BBOXES]            = { "Bounding boxes for object detection and classification" },
+    [AV_FRAME_DATA_DOVI_RPU_BUFFER]             = { "Dolby Vision RPU Data" },
+    [AV_FRAME_DATA_DOVI_METADATA]               = { "Dolby Vision Metadata" },
+    [AV_FRAME_DATA_STEREO3D]                    = { "Stereo 3D",                                    AV_SIDE_DATA_PROP_GLOBAL },
+    [AV_FRAME_DATA_REPLAYGAIN]                  = { "AVReplayGain",                                 AV_SIDE_DATA_PROP_GLOBAL },
+    [AV_FRAME_DATA_DISPLAYMATRIX]               = { "3x3 displaymatrix",                            AV_SIDE_DATA_PROP_GLOBAL },
+    [AV_FRAME_DATA_AUDIO_SERVICE_TYPE]          = { "Audio service type",                           AV_SIDE_DATA_PROP_GLOBAL },
+    [AV_FRAME_DATA_MASTERING_DISPLAY_METADATA]  = { "Mastering display metadata",                   AV_SIDE_DATA_PROP_GLOBAL },
+    [AV_FRAME_DATA_CONTENT_LIGHT_LEVEL]         = { "Content light level metadata",                 AV_SIDE_DATA_PROP_GLOBAL },
+    [AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT] = { "Ambient viewing environment",                  AV_SIDE_DATA_PROP_GLOBAL },
+    [AV_FRAME_DATA_SPHERICAL]                   = { "Spherical Mapping",                            AV_SIDE_DATA_PROP_GLOBAL },
+    [AV_FRAME_DATA_ICC_PROFILE]                 = { "ICC profile",                                  AV_SIDE_DATA_PROP_GLOBAL },
+    [AV_FRAME_DATA_SEI_UNREGISTERED]            = { "H.26[45] User Data Unregistered SEI message",  AV_SIDE_DATA_PROP_MULTI },
+};
+
 static void get_frame_defaults(AVFrame *frame)
 {
     memset(frame, 0, sizeof(*frame));
@@ -63,14 +93,56 @@ static void free_side_data(AVFrameSideData **ptr_sd)
     av_freep(ptr_sd);
 }
 
-static void wipe_side_data(AVFrame *frame)
+static void wipe_side_data(AVFrameSideData ***sd, int *nb_side_data)
 {
-    for (int i = 0; i < frame->nb_side_data; i++) {
-        free_side_data(&frame->side_data[i]);
+    for (int i = 0; i < *nb_side_data; i++) {
+        free_side_data(&((*sd)[i]));
     }
-    frame->nb_side_data = 0;
+    *nb_side_data = 0;
 
-    av_freep(&frame->side_data);
+    av_freep(sd);
+}
+
+static void frame_side_data_wipe(AVFrame *frame)
+{
+    wipe_side_data(&frame->side_data, &frame->nb_side_data);
+}
+
+void av_frame_side_data_free(AVFrameSideData ***sd, int *nb_sd)
+{
+    wipe_side_data(sd, nb_sd);
+}
+
+static void remove_side_data(AVFrameSideData ***sd, int *nb_side_data,
+                             const enum AVFrameSideDataType type)
+{
+    for (int i = *nb_side_data - 1; i >= 0; i--) {
+        AVFrameSideData *entry = ((*sd)[i]);
+        if (entry->type != type)
+            continue;
+
+        free_side_data(&entry);
+
+        ((*sd)[i]) = ((*sd)[*nb_side_data - 1]);
+        (*nb_side_data)--;
+    }
+}
+
+static void remove_side_data_by_entry(AVFrameSideData ***sd, int *nb_sd,
+                                      const AVFrameSideData *target)
+{
+    for (int i = *nb_sd - 1; i >= 0; i--) {
+        AVFrameSideData *entry = ((*sd)[i]);
+        if (entry != target)
+            continue;
+
+        free_side_data(&entry);
+
+        ((*sd)[i]) = ((*sd)[*nb_sd - 1]);
+        (*nb_sd)--;
+
+        return;
+    }
 }
 
 AVFrame *av_frame_alloc(void)
@@ -288,7 +360,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
             sd_dst = av_frame_new_side_data(dst, sd_src->type,
                                             sd_src->size);
             if (!sd_dst) {
-                wipe_side_data(dst);
+                frame_side_data_wipe(dst);
                 return AVERROR(ENOMEM);
             }
             memcpy(sd_dst->data, sd_src->data, sd_src->size);
@@ -297,7 +369,7 @@ FF_ENABLE_DEPRECATION_WARNINGS
             sd_dst = av_frame_new_side_data_from_buf(dst, sd_src->type, ref);
             if (!sd_dst) {
                 av_buffer_unref(&ref);
-                wipe_side_data(dst);
+                frame_side_data_wipe(dst);
                 return AVERROR(ENOMEM);
             }
         }
@@ -437,7 +509,7 @@ int av_frame_replace(AVFrame *dst, const AVFrame *src)
     if (ret < 0)
         goto fail;
 
-    wipe_side_data(dst);
+    frame_side_data_wipe(dst);
     av_dict_free(&dst->metadata);
     ret = frame_copy_props(dst, src, 0);
     if (ret < 0)
@@ -536,7 +608,7 @@ void av_frame_unref(AVFrame *frame)
     if (!frame)
         return;
 
-    wipe_side_data(frame);
+    frame_side_data_wipe(frame);
 
     for (int i = 0; i < FF_ARRAY_ELEMS(frame->buf); i++)
         av_buffer_unref(&frame->buf[i]);
@@ -669,36 +741,55 @@ AVBufferRef *av_frame_get_plane_buffer(const AVFrame *frame, int plane)
     return NULL;
 }
 
-AVFrameSideData *av_frame_new_side_data_from_buf(AVFrame *frame,
-                                                 enum AVFrameSideDataType type,
-                                                 AVBufferRef *buf)
+static AVFrameSideData *add_side_data_from_buf_ext(AVFrameSideData ***sd,
+                                                   int *nb_sd,
+                                                   enum AVFrameSideDataType type,
+                                                   AVBufferRef *buf, uint8_t *data,
+                                                   size_t size)
 {
     AVFrameSideData *ret, **tmp;
 
-    if (!buf)
+    // *nb_sd + 1 needs to fit into an int and a size_t.
+    if ((unsigned)*nb_sd >= FFMIN(INT_MAX, SIZE_MAX))
         return NULL;
 
-    if (frame->nb_side_data > INT_MAX / sizeof(*frame->side_data) - 1)
-        return NULL;
-
-    tmp = av_realloc(frame->side_data,
-                     (frame->nb_side_data + 1) * sizeof(*frame->side_data));
+    tmp = av_realloc_array(*sd, sizeof(**sd), *nb_sd + 1);
     if (!tmp)
         return NULL;
-    frame->side_data = tmp;
+    *sd = tmp;
 
     ret = av_mallocz(sizeof(*ret));
     if (!ret)
         return NULL;
 
     ret->buf = buf;
-    ret->data = ret->buf->data;
-    ret->size = buf->size;
+    ret->data = data;
+    ret->size = size;
     ret->type = type;
 
-    frame->side_data[frame->nb_side_data++] = ret;
+    (*sd)[(*nb_sd)++] = ret;
 
     return ret;
+}
+
+static AVFrameSideData *add_side_data_from_buf(AVFrameSideData ***sd,
+                                               int *nb_sd,
+                                               enum AVFrameSideDataType type,
+                                               AVBufferRef *buf)
+{
+    if (!buf)
+        return NULL;
+
+    return add_side_data_from_buf_ext(sd, nb_sd, type, buf, buf->data, buf->size);
+}
+
+AVFrameSideData *av_frame_new_side_data_from_buf(AVFrame *frame,
+                                                 enum AVFrameSideDataType type,
+                                                 AVBufferRef *buf)
+{
+    return
+        add_side_data_from_buf(
+            &frame->side_data, &frame->nb_side_data, type, buf);
 }
 
 AVFrameSideData *av_frame_new_side_data(AVFrame *frame,
@@ -713,14 +804,74 @@ AVFrameSideData *av_frame_new_side_data(AVFrame *frame,
     return ret;
 }
 
+AVFrameSideData *av_frame_side_data_new(AVFrameSideData ***sd, int *nb_sd,
+                                        enum AVFrameSideDataType type,
+                                        size_t size, unsigned int flags)
+{
+    AVBufferRef     *buf = av_buffer_alloc(size);
+    AVFrameSideData *ret = NULL;
+
+    if (flags & AV_FRAME_SIDE_DATA_FLAG_UNIQUE)
+        remove_side_data(sd, nb_sd, type);
+
+    ret = add_side_data_from_buf(sd, nb_sd, type, buf);
+    if (!ret)
+        av_buffer_unref(&buf);
+
+    return ret;
+}
+
+int av_frame_side_data_clone(AVFrameSideData ***sd, int *nb_sd,
+                             const AVFrameSideData *src, unsigned int flags)
+{
+    AVBufferRef     *buf    = NULL;
+    AVFrameSideData *sd_dst = NULL;
+    int              ret    = AVERROR_BUG;
+
+    if (!sd || !src || !nb_sd || (*nb_sd && !*sd))
+        return AVERROR(EINVAL);
+
+    buf = av_buffer_ref(src->buf);
+    if (!buf)
+        return AVERROR(ENOMEM);
+
+    if (flags & AV_FRAME_SIDE_DATA_FLAG_UNIQUE)
+        remove_side_data(sd, nb_sd, src->type);
+
+    sd_dst = add_side_data_from_buf_ext(sd, nb_sd, src->type, buf,
+                                        src->data, src->size);
+    if (!sd_dst) {
+        av_buffer_unref(&buf);
+        return AVERROR(ENOMEM);
+    }
+
+    ret = av_dict_copy(&sd_dst->metadata, src->metadata, 0);
+    if (ret < 0) {
+        remove_side_data_by_entry(sd, nb_sd, sd_dst);
+        return ret;
+    }
+
+    return 0;
+}
+
+const AVFrameSideData *av_frame_side_data_get_c(const AVFrameSideData * const *sd,
+                                                const int nb_sd,
+                                                enum AVFrameSideDataType type)
+{
+    for (int i = 0; i < nb_sd; i++) {
+        if (sd[i]->type == type)
+            return sd[i];
+    }
+    return NULL;
+}
+
 AVFrameSideData *av_frame_get_side_data(const AVFrame *frame,
                                         enum AVFrameSideDataType type)
 {
-    for (int i = 0; i < frame->nb_side_data; i++) {
-        if (frame->side_data[i]->type == type)
-            return frame->side_data[i];
-    }
-    return NULL;
+    return (AVFrameSideData *)av_frame_side_data_get(
+        frame->side_data, frame->nb_side_data,
+        type
+    );
 }
 
 static int frame_copy_video(AVFrame *dst, const AVFrame *src)
@@ -782,48 +933,21 @@ int av_frame_copy(AVFrame *dst, const AVFrame *src)
 
 void av_frame_remove_side_data(AVFrame *frame, enum AVFrameSideDataType type)
 {
-    for (int i = frame->nb_side_data - 1; i >= 0; i--) {
-        AVFrameSideData *sd = frame->side_data[i];
-        if (sd->type == type) {
-            free_side_data(&frame->side_data[i]);
-            frame->side_data[i] = frame->side_data[frame->nb_side_data - 1];
-            frame->nb_side_data--;
-        }
-    }
+    remove_side_data(&frame->side_data, &frame->nb_side_data, type);
+}
+
+const AVSideDataDescriptor *av_frame_side_data_desc(enum AVFrameSideDataType type)
+{
+    unsigned t = type;
+    if (t < FF_ARRAY_ELEMS(sd_props) && sd_props[t].name)
+        return &sd_props[t];
+    return NULL;
 }
 
 const char *av_frame_side_data_name(enum AVFrameSideDataType type)
 {
-    switch(type) {
-    case AV_FRAME_DATA_PANSCAN:         return "AVPanScan";
-    case AV_FRAME_DATA_A53_CC:          return "ATSC A53 Part 4 Closed Captions";
-    case AV_FRAME_DATA_STEREO3D:        return "Stereo 3D";
-    case AV_FRAME_DATA_MATRIXENCODING:  return "AVMatrixEncoding";
-    case AV_FRAME_DATA_DOWNMIX_INFO:    return "Metadata relevant to a downmix procedure";
-    case AV_FRAME_DATA_REPLAYGAIN:      return "AVReplayGain";
-    case AV_FRAME_DATA_DISPLAYMATRIX:   return "3x3 displaymatrix";
-    case AV_FRAME_DATA_AFD:             return "Active format description";
-    case AV_FRAME_DATA_MOTION_VECTORS:  return "Motion vectors";
-    case AV_FRAME_DATA_SKIP_SAMPLES:    return "Skip samples";
-    case AV_FRAME_DATA_AUDIO_SERVICE_TYPE:          return "Audio service type";
-    case AV_FRAME_DATA_MASTERING_DISPLAY_METADATA:  return "Mastering display metadata";
-    case AV_FRAME_DATA_CONTENT_LIGHT_LEVEL:         return "Content light level metadata";
-    case AV_FRAME_DATA_GOP_TIMECODE:                return "GOP timecode";
-    case AV_FRAME_DATA_S12M_TIMECODE:               return "SMPTE 12-1 timecode";
-    case AV_FRAME_DATA_SPHERICAL:                   return "Spherical Mapping";
-    case AV_FRAME_DATA_ICC_PROFILE:                 return "ICC profile";
-    case AV_FRAME_DATA_DYNAMIC_HDR_PLUS: return "HDR Dynamic Metadata SMPTE2094-40 (HDR10+)";
-    case AV_FRAME_DATA_DYNAMIC_HDR_VIVID: return "HDR Dynamic Metadata CUVA 005.1 2021 (Vivid)";
-    case AV_FRAME_DATA_REGIONS_OF_INTEREST: return "Regions Of Interest";
-    case AV_FRAME_DATA_VIDEO_ENC_PARAMS:            return "Video encoding parameters";
-    case AV_FRAME_DATA_SEI_UNREGISTERED:            return "H.26[45] User Data Unregistered SEI message";
-    case AV_FRAME_DATA_FILM_GRAIN_PARAMS:           return "Film grain parameters";
-    case AV_FRAME_DATA_DETECTION_BBOXES:            return "Bounding boxes for object detection and classification";
-    case AV_FRAME_DATA_DOVI_RPU_BUFFER:             return "Dolby Vision RPU Data";
-    case AV_FRAME_DATA_DOVI_METADATA:               return "Dolby Vision Metadata";
-    case AV_FRAME_DATA_AMBIENT_VIEWING_ENVIRONMENT: return "Ambient viewing environment";
-    }
-    return NULL;
+    const AVSideDataDescriptor *desc = av_frame_side_data_desc(type);
+    return desc ? desc->name : NULL;
 }
 
 static int calc_cropping_offsets(size_t offsets[4], const AVFrame *frame,

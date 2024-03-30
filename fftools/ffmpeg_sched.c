@@ -260,6 +260,12 @@ typedef struct SchFilterGraph {
     int                 task_exited;
 } SchFilterGraph;
 
+enum SchedulerState {
+    SCH_STATE_UNINIT,
+    SCH_STATE_STARTED,
+    SCH_STATE_STOPPED,
+};
+
 struct Scheduler {
     const AVClass      *class;
 
@@ -292,7 +298,7 @@ struct Scheduler {
     char               *sdp_filename;
     int                 sdp_auto;
 
-    int                 transcode_started;
+    enum SchedulerState state;
     atomic_int          terminate;
     atomic_int          task_failed;
 
@@ -365,7 +371,21 @@ static int queue_alloc(ThreadQueue **ptq, unsigned nb_streams, unsigned queue_si
     ThreadQueue *tq;
     ObjPool *op;
 
-    queue_size = queue_size > 0 ? queue_size : 8;
+    if (queue_size <= 0) {
+        if (type == QUEUE_FRAMES)
+            queue_size = DEFAULT_FRAME_THREAD_QUEUE_SIZE;
+        else
+            queue_size = DEFAULT_PACKET_THREAD_QUEUE_SIZE;
+    }
+
+    if (type == QUEUE_FRAMES) {
+        // This queue length is used in the decoder code to ensure that
+        // there are enough entries in fixed-size frame pools to account
+        // for frames held in queues inside the ffmpeg utility.  If this
+        // can ever dynamically change then the corresponding decode
+        // code needs to be updated as well.
+        av_assert0(queue_size == DEFAULT_FRAME_THREAD_QUEUE_SIZE);
+    }
 
     op = (type == QUEUE_PACKETS) ? objpool_alloc_packets() :
                                    objpool_alloc_frames();
@@ -384,22 +404,6 @@ static int queue_alloc(ThreadQueue **ptq, unsigned nb_streams, unsigned queue_si
 }
 
 static void *task_wrapper(void *arg);
-
-static int task_stop(SchTask *task)
-{
-    int ret;
-    void *thread_ret;
-
-    if (!task->thread_running)
-        return 0;
-
-    ret = pthread_join(task->thread, &thread_ret);
-    av_assert0(ret == 0);
-
-    task->thread_running = 0;
-
-    return (intptr_t)thread_ret;
-}
 
 static int task_start(SchTask *task)
 {
@@ -452,59 +456,6 @@ static int64_t trailing_dts(const Scheduler *sch, int count_finished)
     }
 
     return min_dts == INT64_MAX ? AV_NOPTS_VALUE : min_dts;
-}
-
-int sch_stop(Scheduler *sch, int64_t *finish_ts)
-{
-    int ret = 0, err;
-
-    atomic_store(&sch->terminate, 1);
-
-    for (unsigned type = 0; type < 2; type++)
-        for (unsigned i = 0; i < (type ? sch->nb_demux : sch->nb_filters); i++) {
-            SchWaiter *w = type ? &sch->demux[i].waiter : &sch->filters[i].waiter;
-            waiter_set(w, 1);
-        }
-
-    for (unsigned i = 0; i < sch->nb_demux; i++) {
-        SchDemux *d = &sch->demux[i];
-
-        err = task_stop(&d->task);
-        ret = err_merge(ret, err);
-    }
-
-    for (unsigned i = 0; i < sch->nb_dec; i++) {
-        SchDec *dec = &sch->dec[i];
-
-        err = task_stop(&dec->task);
-        ret = err_merge(ret, err);
-    }
-
-    for (unsigned i = 0; i < sch->nb_filters; i++) {
-        SchFilterGraph *fg = &sch->filters[i];
-
-        err = task_stop(&fg->task);
-        ret = err_merge(ret, err);
-    }
-
-    for (unsigned i = 0; i < sch->nb_enc; i++) {
-        SchEnc *enc = &sch->enc[i];
-
-        err = task_stop(&enc->task);
-        ret = err_merge(ret, err);
-    }
-
-    for (unsigned i = 0; i < sch->nb_mux; i++) {
-        SchMux *mux = &sch->mux[i];
-
-        err = task_stop(&mux->task);
-        ret = err_merge(ret, err);
-    }
-
-    if (finish_ts)
-        *finish_ts = trailing_dts(sch, 1);
-
-    return ret;
 }
 
 void sch_free(Scheduler **psch)
@@ -1199,7 +1150,8 @@ int sch_mux_stream_ready(Scheduler *sch, unsigned mux_idx, unsigned stream_idx)
 
     // this may be called during initialization - do not start
     // threads before sch_start() is called
-    if (++mux->nb_streams_ready == mux->nb_streams && sch->transcode_started)
+    if (++mux->nb_streams_ready == mux->nb_streams &&
+        sch->state >= SCH_STATE_STARTED)
         ret = mux_init(sch, mux);
 
     pthread_mutex_unlock(&sch->mux_ready_lock);
@@ -1569,7 +1521,8 @@ int sch_start(Scheduler *sch)
     if (ret < 0)
         return ret;
 
-    sch->transcode_started = 1;
+    av_assert0(sch->state == SCH_STATE_UNINIT);
+    sch->state = SCH_STATE_STARTED;
 
     for (unsigned i = 0; i < sch->nb_mux; i++) {
         SchMux *mux = &sch->mux[i];
@@ -1577,7 +1530,7 @@ int sch_start(Scheduler *sch)
         if (mux->nb_streams_ready == mux->nb_streams) {
             ret = mux_init(sch, mux);
             if (ret < 0)
-                return ret;
+                goto fail;
         }
     }
 
@@ -1586,7 +1539,7 @@ int sch_start(Scheduler *sch)
 
         ret = task_start(&enc->task);
         if (ret < 0)
-            return ret;
+            goto fail;
     }
 
     for (unsigned i = 0; i < sch->nb_filters; i++) {
@@ -1594,7 +1547,7 @@ int sch_start(Scheduler *sch)
 
         ret = task_start(&fg->task);
         if (ret < 0)
-            return ret;
+            goto fail;
     }
 
     for (unsigned i = 0; i < sch->nb_dec; i++) {
@@ -1602,7 +1555,7 @@ int sch_start(Scheduler *sch)
 
         ret = task_start(&dec->task);
         if (ret < 0)
-            return ret;
+            goto fail;
     }
 
     for (unsigned i = 0; i < sch->nb_demux; i++) {
@@ -1613,7 +1566,7 @@ int sch_start(Scheduler *sch)
 
         ret = task_start(&d->task);
         if (ret < 0)
-            return ret;
+            goto fail;
     }
 
     pthread_mutex_lock(&sch->schedule_lock);
@@ -1621,6 +1574,9 @@ int sch_start(Scheduler *sch)
     pthread_mutex_unlock(&sch->schedule_lock);
 
     return 0;
+fail:
+    sch_stop(sch, NULL);
+    return ret;
 }
 
 int sch_wait(Scheduler *sch, uint64_t timeout_us, int64_t *transcode_ts)
@@ -2330,15 +2286,13 @@ int sch_enc_send(Scheduler *sch, unsigned enc_idx, AVPacket *pkt)
         ret = enc_send_to_dst(sch, enc->dst[i], finished, to_send);
         if (ret < 0) {
             av_packet_unref(to_send);
-            if (ret == AVERROR_EOF) {
-                ret = 0;
+            if (ret == AVERROR_EOF)
                 continue;
-            }
             return ret;
         }
     }
 
-    return ret;
+    return 0;
 }
 
 static int enc_done(Scheduler *sch, unsigned enc_idx)
@@ -2469,6 +2423,18 @@ int sch_filter_command(Scheduler *sch, unsigned fg_idx, AVFrame *frame)
     return send_to_filter(sch, fg, fg->nb_inputs, frame);
 }
 
+static int task_cleanup(Scheduler *sch, SchedulerNode node)
+{
+    switch (node.type) {
+    case SCH_NODE_TYPE_DEMUX:       return demux_done (sch, node.idx);
+    case SCH_NODE_TYPE_MUX:         return mux_done   (sch, node.idx);
+    case SCH_NODE_TYPE_DEC:         return dec_done   (sch, node.idx);
+    case SCH_NODE_TYPE_ENC:         return enc_done   (sch, node.idx);
+    case SCH_NODE_TYPE_FILTER_IN:   return filter_done(sch, node.idx);
+    default: av_assert0(0);
+    }
+}
+
 static void *task_wrapper(void *arg)
 {
     SchTask  *task = arg;
@@ -2481,15 +2447,7 @@ static void *task_wrapper(void *arg)
         av_log(task->func_arg, AV_LOG_ERROR,
                "Task finished with error code: %d (%s)\n", ret, av_err2str(ret));
 
-    switch (task->node.type) {
-    case SCH_NODE_TYPE_DEMUX:       err = demux_done (sch, task->node.idx); break;
-    case SCH_NODE_TYPE_MUX:         err = mux_done   (sch, task->node.idx); break;
-    case SCH_NODE_TYPE_DEC:         err = dec_done   (sch, task->node.idx); break;
-    case SCH_NODE_TYPE_ENC:         err = enc_done   (sch, task->node.idx); break;
-    case SCH_NODE_TYPE_FILTER_IN:   err = filter_done(sch, task->node.idx); break;
-    default: av_assert0(0);
-    }
-
+    err = task_cleanup(sch, task->node);
     ret = err_merge(ret, err);
 
     // EOF is considered normal termination
@@ -2503,4 +2461,78 @@ static void *task_wrapper(void *arg)
            ret < 0 ? av_err2str(ret) : "success");
 
     return (void*)(intptr_t)ret;
+}
+
+static int task_stop(Scheduler *sch, SchTask *task)
+{
+    int ret;
+    void *thread_ret;
+
+    if (!task->thread_running)
+        return task_cleanup(sch, task->node);
+
+    ret = pthread_join(task->thread, &thread_ret);
+    av_assert0(ret == 0);
+
+    task->thread_running = 0;
+
+    return (intptr_t)thread_ret;
+}
+
+int sch_stop(Scheduler *sch, int64_t *finish_ts)
+{
+    int ret = 0, err;
+
+    if (sch->state != SCH_STATE_STARTED)
+        return 0;
+
+    atomic_store(&sch->terminate, 1);
+
+    for (unsigned type = 0; type < 2; type++)
+        for (unsigned i = 0; i < (type ? sch->nb_demux : sch->nb_filters); i++) {
+            SchWaiter *w = type ? &sch->demux[i].waiter : &sch->filters[i].waiter;
+            waiter_set(w, 1);
+        }
+
+    for (unsigned i = 0; i < sch->nb_demux; i++) {
+        SchDemux *d = &sch->demux[i];
+
+        err = task_stop(sch, &d->task);
+        ret = err_merge(ret, err);
+    }
+
+    for (unsigned i = 0; i < sch->nb_dec; i++) {
+        SchDec *dec = &sch->dec[i];
+
+        err = task_stop(sch, &dec->task);
+        ret = err_merge(ret, err);
+    }
+
+    for (unsigned i = 0; i < sch->nb_filters; i++) {
+        SchFilterGraph *fg = &sch->filters[i];
+
+        err = task_stop(sch, &fg->task);
+        ret = err_merge(ret, err);
+    }
+
+    for (unsigned i = 0; i < sch->nb_enc; i++) {
+        SchEnc *enc = &sch->enc[i];
+
+        err = task_stop(sch, &enc->task);
+        ret = err_merge(ret, err);
+    }
+
+    for (unsigned i = 0; i < sch->nb_mux; i++) {
+        SchMux *mux = &sch->mux[i];
+
+        err = task_stop(sch, &mux->task);
+        ret = err_merge(ret, err);
+    }
+
+    if (finish_ts)
+        *finish_ts = trailing_dts(sch, 1);
+
+    sch->state = SCH_STATE_STOPPED;
+
+    return ret;
 }

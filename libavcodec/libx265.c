@@ -30,13 +30,12 @@
 #include "libavutil/avassert.h"
 #include "libavutil/buffer.h"
 #include "libavutil/internal.h"
-#include "libavutil/common.h"
+#include "libavutil/mastering_display_metadata.h"
 #include "libavutil/opt.h"
 #include "libavutil/pixdesc.h"
 #include "avcodec.h"
 #include "codec_internal.h"
 #include "encode.h"
-#include "internal.h"
 #include "packet_internal.h"
 #include "atsc_a53.h"
 #include "sei.h"
@@ -171,6 +170,68 @@ static av_cold int libx265_param_parse_int(AVCodecContext *avctx,
     if (ctx->api->param_parse(ctx->params, key, buf) == X265_PARAM_BAD_VALUE) {
         av_log(avctx, AV_LOG_ERROR, "Invalid value %d for param \"%s\".\n", value, key);
         return AVERROR(EINVAL);
+    }
+
+    return 0;
+}
+
+static int handle_mdcv(void *logctx, const x265_api *api,
+                       x265_param *params,
+                       const AVMasteringDisplayMetadata *mdcv)
+{
+    char buf[10 /* # of PRId64s */ * 20 /* max strlen for %PRId64 */ + sizeof("G(,)B(,)R(,)WP(,)L(,)")];
+
+    // G(%hu,%hu)B(%hu,%hu)R(%hu,%hu)WP(%hu,%hu)L(%u,%u)
+    snprintf(buf, sizeof(buf),
+        "G(%"PRId64",%"PRId64")B(%"PRId64",%"PRId64")R(%"PRId64",%"PRId64")"
+        "WP(%"PRId64",%"PRId64")L(%"PRId64",%"PRId64")",
+        av_rescale_q(1, mdcv->display_primaries[1][0], (AVRational){ 1, 50000 }),
+        av_rescale_q(1, mdcv->display_primaries[1][1], (AVRational){ 1, 50000 }),
+        av_rescale_q(1, mdcv->display_primaries[2][0], (AVRational){ 1, 50000 }),
+        av_rescale_q(1, mdcv->display_primaries[2][1], (AVRational){ 1, 50000 }),
+        av_rescale_q(1, mdcv->display_primaries[0][0], (AVRational){ 1, 50000 }),
+        av_rescale_q(1, mdcv->display_primaries[0][1], (AVRational){ 1, 50000 }),
+        av_rescale_q(1, mdcv->white_point[0], (AVRational){ 1, 50000 }),
+        av_rescale_q(1, mdcv->white_point[1], (AVRational){ 1, 50000 }),
+        av_rescale_q(1, mdcv->max_luminance,  (AVRational){ 1, 10000 }),
+        av_rescale_q(1, mdcv->min_luminance,  (AVRational){ 1, 10000 }));
+
+    if (api->param_parse(params, "master-display", buf) ==
+            X265_PARAM_BAD_VALUE) {
+        av_log(logctx, AV_LOG_ERROR,
+               "Invalid value \"%s\" for param \"master-display\".\n",
+               buf);
+        return AVERROR(EINVAL);
+    }
+
+    return 0;
+}
+
+static int handle_side_data(AVCodecContext *avctx, const x265_api *api,
+                            x265_param *params)
+{
+    const AVFrameSideData *cll_sd =
+        av_frame_side_data_get(avctx->decoded_side_data,
+            avctx->nb_decoded_side_data, AV_FRAME_DATA_CONTENT_LIGHT_LEVEL);
+    const AVFrameSideData *mdcv_sd =
+        av_frame_side_data_get(avctx->decoded_side_data,
+            avctx->nb_decoded_side_data,
+            AV_FRAME_DATA_MASTERING_DISPLAY_METADATA);
+
+    if (cll_sd) {
+        const AVContentLightMetadata *cll =
+            (AVContentLightMetadata *)cll_sd->data;
+
+        params->maxCLL  = cll->MaxCLL;
+        params->maxFALL = cll->MaxFALL;
+    }
+
+    if (mdcv_sd) {
+        int ret = handle_mdcv(
+            avctx, api, params,
+            (AVMasteringDisplayMetadata *)mdcv_sd->data);
+        if (ret < 0)
+            return ret;
     }
 
     return 0;
@@ -334,6 +395,13 @@ FF_ENABLE_DEPRECATION_WARNINGS
                "Pixel format '%s' cannot be mapped to a libx265 CSP!\n",
                desc->name);
         return AVERROR_BUG;
+    }
+
+    ret = handle_side_data(avctx, ctx->api, ctx->params);
+    if (ret < 0) {
+        av_log(avctx, AV_LOG_ERROR, "Failed handling side data! (%s)\n",
+               av_err2str(ret));
+        return ret;
     }
 
     if (ctx->crf >= 0) {
