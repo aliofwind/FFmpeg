@@ -20,10 +20,10 @@
  */
 
 #include "libavutil/avassert.h"
-#include "libavutil/common.h"
 #include "libavutil/iamf.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/log.h"
+#include "libavutil/mem.h"
 #include "libavcodec/get_bits.h"
 #include "libavcodec/flac.h"
 #include "libavcodec/leb.h"
@@ -822,6 +822,7 @@ static int mix_presentation_obu(void *s, IAMFContext *c, AVIOContext *pb, int le
     mix_presentation->language_label = av_calloc(mix_presentation->count_label,
                                                  sizeof(*mix_presentation->language_label));
     if (!mix_presentation->language_label) {
+        mix_presentation->count_label = 0;
         ret = AVERROR(ENOMEM);
         goto fail;
     }
