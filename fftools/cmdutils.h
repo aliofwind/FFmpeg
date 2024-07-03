@@ -371,11 +371,13 @@ int check_stream_specifier(AVFormatContext *s, AVStream *st, const char *spec);
  * @param codec The particular codec for which the options should be filtered.
  *              If null, the default one is looked up according to the codec id.
  * @param dst a pointer to the created dictionary
+ * @param opts_used if non-NULL, every option stored in dst is also stored here,
+ *                  with specifiers preserved
  * @return a non-negative number on success, a negative error code on failure
  */
 int filter_codec_opts(const AVDictionary *opts, enum AVCodecID codec_id,
                       AVFormatContext *s, AVStream *st, const AVCodec *codec,
-                      AVDictionary **dst);
+                      AVDictionary **dst, AVDictionary **opts_used);
 
 /**
  * Setup AVCodecContext options for avformat_find_stream_info().
@@ -482,5 +484,11 @@ double get_rotation(const int32_t *displaymatrix);
 
 /* read file contents into a string */
 char *file_read(const char *filename);
+
+/* Remove keys in dictionary b from dictionary a */
+void remove_avoptions(AVDictionary **a, AVDictionary *b);
+
+/* Check if any keys exist in dictionary m */
+int check_avoptions(AVDictionary *m);
 
 #endif /* FFTOOLS_CMDUTILS_H */
