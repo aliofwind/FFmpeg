@@ -166,7 +166,7 @@ static int codec_config_obu(void *s, IAMFContext *c, AVIOContext *pb, int len)
     uint8_t *buf;
     enum AVCodecID avcodec_id;
     unsigned codec_config_id, nb_samples, codec_id;
-    int16_t seek_preroll;
+    int16_t audio_roll_distance;
     int ret;
 
     buf = av_malloc(len);
@@ -186,7 +186,7 @@ static int codec_config_obu(void *s, IAMFContext *c, AVIOContext *pb, int len)
     codec_config_id = ffio_read_leb(pbc);
     codec_id = avio_rb32(pbc);
     nb_samples = ffio_read_leb(pbc);
-    seek_preroll = avio_rb16(pbc);
+    audio_roll_distance = avio_rb16(pbc);
 
     switch(codec_id) {
     case MKBETAG('O','p','u','s'):
@@ -225,7 +225,7 @@ static int codec_config_obu(void *s, IAMFContext *c, AVIOContext *pb, int len)
     codec_config->codec_config_id = codec_config_id;
     codec_config->codec_id = avcodec_id;
     codec_config->nb_samples = nb_samples;
-    codec_config->seek_preroll = seek_preroll;
+    codec_config->audio_roll_distance = audio_roll_distance;
 
     switch(codec_id) {
     case MKBETAG('O','p','u','s'):
@@ -272,6 +272,9 @@ static int update_extradata(AVCodecParameters *codecpar)
     switch(codecpar->codec_id) {
     case AV_CODEC_ID_OPUS:
         AV_WB8(codecpar->extradata + 9, codecpar->ch_layout.nb_channels);
+        AV_WL16(codecpar->extradata + 10, AV_RB16(codecpar->extradata + 10)); // Byte swap pre-skip
+        AV_WL32(codecpar->extradata + 12, AV_RB32(codecpar->extradata + 12)); // Byte swap sample rate
+        AV_WL16(codecpar->extradata + 16, AV_RB16(codecpar->extradata + 16)); // Byte swap Output Gain
         break;
     case AV_CODEC_ID_AAC: {
         uint8_t buf[5];
@@ -594,7 +597,7 @@ static int audio_element_obu(void *s, IAMFContext *c, AVIOContext *pb, int len)
     FFIOContext b;
     AVIOContext *pbc;
     uint8_t *buf;
-    unsigned audio_element_id, codec_config_id, num_parameters;
+    unsigned audio_element_id, nb_substreams, codec_config_id, num_parameters;
     int audio_element_type, ret;
 
     buf = av_malloc(len);
@@ -649,14 +652,15 @@ static int audio_element_obu(void *s, IAMFContext *c, AVIOContext *pb, int len)
         goto fail;
     }
 
-    audio_element->nb_substreams = ffio_read_leb(pbc);
+    nb_substreams = ffio_read_leb(pbc);
     audio_element->codec_config_id = codec_config_id;
     audio_element->audio_element_id = audio_element_id;
-    audio_element->substreams = av_calloc(audio_element->nb_substreams, sizeof(*audio_element->substreams));
+    audio_element->substreams = av_calloc(nb_substreams, sizeof(*audio_element->substreams));
     if (!audio_element->substreams) {
         ret = AVERROR(ENOMEM);
         goto fail;
     }
+    audio_element->nb_substreams = nb_substreams;
 
     element = audio_element->element = av_iamf_audio_element_alloc();
     if (!element) {
@@ -682,7 +686,7 @@ static int audio_element_obu(void *s, IAMFContext *c, AVIOContext *pb, int len)
         substream->codecpar->codec_id   = codec_config->codec_id;
         substream->codecpar->frame_size = codec_config->nb_samples;
         substream->codecpar->sample_rate = codec_config->sample_rate;
-        substream->codecpar->seek_preroll = codec_config->seek_preroll;
+        substream->codecpar->seek_preroll = -codec_config->audio_roll_distance * codec_config->nb_samples;
 
         switch(substream->codecpar->codec_id) {
         case AV_CODEC_ID_AAC:

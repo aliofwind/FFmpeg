@@ -23546,13 +23546,13 @@ tile=3x2:nb_frames=5:padding=7:margin=2
 @end itemize
 
 @section tiltandshift
-Apply tilt-and-shift effet.
+Apply tilt-and-shift effect.
 
 What happens when you invert time and space?
 
 Normally a video is composed of several frames that represent a different
 instant of time and shows a scene that evolves in the space captured by the
-frame. This filter is the antipode of that concept, taking inspiration by
+frame. This filter is the antipode of that concept, taking inspiration from
 tilt and shift photography.
 
 A filtered frame contains the whole timeline of events composing the sequence,
@@ -23591,7 +23591,7 @@ How many columns should be inserted before end of filtering.
 
 @end table
 
-Normally the filter shifts and tils from the very first frame, and stops when
+Normally the filter shifts and tilts from the very first frame, and stops when
 the last one is received. However, before filtering starts, normal video may
 be preseved, so that the effect is slowly shifted in its place. Similarly,
 the last video frame may be reconstructed at the end. Alternatively it is
@@ -23599,7 +23599,7 @@ possible to just start and end with black.
 
 @table @samp
 @item none
-Filtering is starts immediately and ends when the last frame is received.
+Filtering starts immediately and ends when the last frame is received.
 
 @item frame
 The first frames or the very last frame are kept intact during processing.
@@ -29306,28 +29306,30 @@ due to boulders in a generated terrain).
 Specify the size (width and height) of the buffered video frames. For the
 syntax of this option, check the
 @ref{video size syntax,,"Video size" section in the ffmpeg-utils manual,ffmpeg-utils}.
+Default value is @code{320x240}.
 
 @item rate, r
 Specify the frame rate expected for the video stream, expressed as a
-number of frames per second.
+number of frames per second. Default value is @code{25}.
 
 @item octaves
 Specify the total number of components making up the noise, each one
-with doubled frequency.
+with doubled frequency. Default value is @code{1}.
 
 @item persistence
 Set the ratio used to compute the amplitude of the next octave
-component with respect to the previous component amplitude.
+component with respect to the previous component amplitude. Default
+value is @code{1}.
 
 @item xscale
 @item yscale
 Define a scale factor used to multiple the x, y coordinates. This can
 be useful to define an effect with a pattern stretched along the x or
-y axis.
+y axis. Default value is @code{1}.
 
 @item tscale
 Define a scale factor used to multiple the time coordinate. This can
-be useful to change the time variation speed.
+be useful to change the time variation speed. Default value is @code{1}.
 
 @item random_mode
 Set random mode used to compute initial pattern.
@@ -29346,9 +29348,11 @@ sources.
 Use the value specified by @option{random_seed} option.
 @end table
 
+Default value is @code{random}.
+
 @item random_seed, seed
 When @option{random_mode} is set to @var{random_seed}, use this value
-to compute the initial pattern.
+to compute the initial pattern. Default value is @code{0}.
 @end table
 
 @subsection Examples
