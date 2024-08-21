@@ -645,7 +645,7 @@ static int dshow_get_device_list(AVFormatContext *avctx, AVDeviceInfoList *devic
     }
 
     ret = dshow_cycle_devices(avctx, devenum, VideoDevice, VideoSourceDevice, NULL, NULL, &device_list);
-    if (ret < S_OK)
+    if (ret < S_OK && ret != AVERROR(EIO))
         goto error;
     ret = dshow_cycle_devices(avctx, devenum, AudioDevice, AudioSourceDevice, NULL, NULL, &device_list);
 
@@ -898,8 +898,8 @@ dshow_cycle_formats(AVFormatContext *avctx, enum dshowDeviceType devtype,
 
         if (devtype == VideoDevice) {
             VIDEO_STREAM_CONFIG_CAPS *vcaps = caps;
-            BITMAPINFOHEADER *bih;
-            int64_t *fr;
+            BITMAPINFOHEADER *bih = NULL;
+            int64_t *fr = NULL;
 #if DSHOWDEBUG
             ff_print_VIDEO_STREAM_CONFIG_CAPS(vcaps);
 #endif

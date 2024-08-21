@@ -17,23 +17,31 @@
  */
 
 #include "libavutil/internal.h"
+#include "libavutil/intreadwrite.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
 #include "amfenc.h"
 #include "codec_internal.h"
 
+#define AMF_VIDEO_ENCODER_AV1_CAP_WIDTH_ALIGNMENT_FACTOR_LOCAL                L"Av1WidthAlignmentFactor"          // amf_int64; default = 1
+#define AMF_VIDEO_ENCODER_AV1_CAP_HEIGHT_ALIGNMENT_FACTOR_LOCAL               L"Av1HeightAlignmentFactor"         // amf_int64; default = 1
+
 #define OFFSET(x) offsetof(AmfContext, x)
 #define VE AV_OPT_FLAG_VIDEO_PARAM | AV_OPT_FLAG_ENCODING_PARAM
 static const AVOption options[] = {
 
-    { "usage",                  "Set the encoding usage",                   OFFSET(usage),                          AV_OPT_TYPE_INT,   {.i64 = -1 }, -1, AMF_VIDEO_ENCODER_AV1_USAGE_LOW_LATENCY, VE, .unit = "usage" },
+    { "usage",                  "Set the encoding usage",                   OFFSET(usage),  AV_OPT_TYPE_INT,   {.i64 = -1 }, -1, AMF_VIDEO_ENCODER_AV1_USAGE_LOW_LATENCY_HIGH_QUALITY, VE, .unit = "usage" },
     { "transcoding",            "Generic Transcoding",                      0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_USAGE_TRANSCODING               }, 0, 0, VE, .unit = "usage" },
+    { "ultralowlatency",        "ultra low latency trancoding",             0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_USAGE_ULTRA_LOW_LATENCY         }, 0, 0, VE, .unit = "usage" },
     { "lowlatency",             "Low latency usecase",                      0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_USAGE_LOW_LATENCY               }, 0, 0, VE, .unit = "usage" },
+    { "webcam",                 "Webcam",                                   0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_USAGE_WEBCAM                    }, 0, 0, VE, .unit = "usage" },
+    { "high_quality",           "high quality trancoding",                  0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_USAGE_HIGH_QUALITY              }, 0, 0, VE, .unit = "usage" },
+    { "lowlatency_high_quality","low latency yet high quality trancoding",  0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_USAGE_LOW_LATENCY_HIGH_QUALITY  }, 0, 0, VE, .unit = "usage" },
 
-    { "profile",                "Set the profile",           OFFSET(profile),                        AV_OPT_TYPE_INT,{.i64 = -1 }, -1, AMF_VIDEO_ENCODER_AV1_PROFILE_MAIN, VE, .unit = "profile" },
+    { "profile",                "Set the profile", OFFSET(profile),  AV_OPT_TYPE_INT,{.i64 = -1 }, -1, AMF_VIDEO_ENCODER_AV1_PROFILE_MAIN, VE, .unit = "profile" },
     { "main",                   "", 0, AV_OPT_TYPE_CONST,{.i64 = AMF_VIDEO_ENCODER_AV1_PROFILE_MAIN }, 0, 0, VE, .unit = "profile" },
 
-    { "level",                  "Set the encoding level (default auto)",    OFFSET(level),              AV_OPT_TYPE_INT,{.i64 = -1 }, -1, AMF_VIDEO_ENCODER_AV1_LEVEL_7_3, VE, .unit = "level" },
+    { "level",                  "Set the encoding level (default auto)",    OFFSET(level), AV_OPT_TYPE_INT,{.i64 = -1 }, -1, AMF_VIDEO_ENCODER_AV1_LEVEL_7_3, VE, .unit = "level" },
     { "auto",                   "", 0, AV_OPT_TYPE_CONST, {.i64 = -1                              }, 0, 0, VE, .unit = "level" },
     { "2.0",                    "", 0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_LEVEL_2_0 }, 0, 0, VE, .unit = "level" },
     { "2.1",                    "", 0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_LEVEL_2_1 }, 0, 0, VE, .unit = "level" },
@@ -67,6 +75,12 @@ static const AVOption options[] = {
     { "balanced",               "", 0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_BALANCED      }, 0, 0, VE, .unit = "quality" },
     { "speed",                  "", 0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_QUALITY_PRESET_SPEED         }, 0, 0, VE, .unit = "quality" },
 
+    { "latency",                "Set the encoding latency mode",        OFFSET(latency),                        AV_OPT_TYPE_INT,        {.i64 = -1 }, -1, AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_LOWEST_LATENCY, VE, .unit = "latency_mode" },
+    { "none",                   "No encoding latency requirement.",     0,                                      AV_OPT_TYPE_CONST,      {.i64 = AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_NONE                      }, 0, 0, VE, .unit = "latency_mode" },
+    { "power_saving_real_time", "Try the best to finish encoding a frame within 1/framerate sec.", 0,           AV_OPT_TYPE_CONST,      {.i64 = AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_POWER_SAVING_REAL_TIME    }, 0, 0, VE, .unit = "latency_mode" },
+    { "real_time",              "Try the best to finish encoding a frame within 1/(2 x framerate) sec.", 0,     AV_OPT_TYPE_CONST,      {.i64 = AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_REAL_TIME                 }, 0, 0, VE, .unit = "latency_mode" },
+    { "lowest_latency",         "Encoding as fast as possible. This mode causes highest power consumption", 0,  AV_OPT_TYPE_CONST,      {.i64 = AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE_LOWEST_LATENCY            }, 0, 0, VE, .unit = "latency_mode" },
+
     { "rc",                     "Set the rate control mode",                OFFSET(rate_control_mode),              AV_OPT_TYPE_INT, {.i64 = AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_UNKNOWN }, AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_UNKNOWN, AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_HIGH_QUALITY_CBR, VE, .unit = "rc" },
     { "cqp",                    "Constant Quantization Parameter",      0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_CONSTANT_QP             }, 0, 0, VE, .unit = "rc" },
     { "vbr_latency",            "Latency Constrained Variable Bitrate", 0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_RATE_CONTROL_METHOD_LATENCY_CONSTRAINED_VBR }, 0, 0, VE, .unit = "rc" },
@@ -97,6 +111,11 @@ static const AVOption options[] = {
     { "qp_p",                   "quantization parameter for P-frame",       OFFSET(qp_p),                           AV_OPT_TYPE_INT, {.i64 = -1  }, -1, 255, VE },
     { "qp_i",                   "quantization parameter for I-frame",       OFFSET(qp_i),                           AV_OPT_TYPE_INT, {.i64 = -1  }, -1, 255, VE },
     { "skip_frame",             "Rate Control Based Frame Skip",            OFFSET(skip_frame),                     AV_OPT_TYPE_BOOL,{.i64 = -1  }, -1, 1, VE },
+
+    { "aq_mode",                "adaptive quantization mode",       OFFSET(aq_mode),      AV_OPT_TYPE_INT, {.i64 = -1  }, -1, AMF_VIDEO_ENCODER_AV1_AQ_MODE_CAQ, VE , .unit = "adaptive_quantisation_mode" },
+    { "none",                   "no adaptive quantization",         0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_AQ_MODE_NONE }, 0, 0, VE, .unit = "adaptive_quantisation_mode" },
+    { "caq",                    "context adaptive quantization",    0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_AQ_MODE_CAQ }, 0, 0, VE, .unit = "adaptive_quantisation_mode" },
+
 
     { "align",                  "alignment mode",                           OFFSET(align),                          AV_OPT_TYPE_INT,     {.i64 = AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS },         AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_64X16_ONLY, AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_NO_RESTRICTIONS, VE, .unit = "align" },
     { "64x16",                  "", 0, AV_OPT_TYPE_CONST, {.i64 = AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE_64X16_ONLY               }, 0, 0, VE, .unit = "align" },
@@ -168,6 +187,11 @@ static av_cold int amf_encode_init_av1(AVCodecContext* avctx)
     AMFSize             framesize = AMFConstructSize(avctx->width, avctx->height);
 
 
+    //for av1 alignment and crop
+    uint32_t            crop_right  = 0;
+    uint32_t            crop_bottom = 0;
+    int                 width_alignment_factor  = -1;
+    int                 height_alignment_factor = -1;
 
     if (avctx->framerate.num > 0 && avctx->framerate.den > 0) {
         framerate = AMFConstructRate(avctx->framerate.num, avctx->framerate.den);
@@ -356,6 +380,14 @@ FF_ENABLE_DEPRECATION_WARNINGS
     }
     AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_AV1_ALIGNMENT_MODE, ctx->align);
 
+    if (ctx->aq_mode != -1) {
+        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_AV1_AQ_MODE, ctx->aq_mode);
+    }
+
+    if (ctx->latency != -1) {
+        AMF_ASSIGN_PROPERTY_INT64(res, ctx->encoder, AMF_VIDEO_ENCODER_AV1_ENCODING_LATENCY_MODE, ctx->latency);
+    }
+
     if (ctx->preanalysis != -1) {
         AMF_ASSIGN_PROPERTY_BOOL(res, ctx->encoder, AMF_VIDEO_ENCODER_AV1_PRE_ANALYSIS_ENABLE, !!((ctx->preanalysis == 0) ? false : true));
     }
@@ -481,6 +513,60 @@ FF_ENABLE_DEPRECATION_WARNINGS
 
     buffer->pVtbl->Release(buffer);
     var.pInterface->pVtbl->Release(var.pInterface);
+
+    //processing crop informaiton according to alignment
+    if (ctx->encoder->pVtbl->GetProperty(ctx->encoder, AMF_VIDEO_ENCODER_AV1_CAP_WIDTH_ALIGNMENT_FACTOR_LOCAL, &var) != AMF_OK)
+        // assume older driver and Navi3x
+        width_alignment_factor = 64;
+    else
+        width_alignment_factor = (int)var.int64Value;
+
+    if (ctx->encoder->pVtbl->GetProperty(ctx->encoder, AMF_VIDEO_ENCODER_AV1_CAP_HEIGHT_ALIGNMENT_FACTOR_LOCAL, &var) != AMF_OK)
+        // assume older driver and Navi3x
+        height_alignment_factor = 16;
+    else
+        height_alignment_factor = (int)var.int64Value;
+
+    if (width_alignment_factor != -1 &&  height_alignment_factor != -1) {
+        if (avctx->width % width_alignment_factor != 0)
+            crop_right = width_alignment_factor - (avctx->width & (width_alignment_factor - 1));
+
+        if (avctx->height % height_alignment_factor != 0)
+            crop_bottom = height_alignment_factor - (avctx->height & (height_alignment_factor - 1));
+
+        // There is special processing for crop_bottom equal to 8 in hardware
+        if (crop_bottom == 8)
+            crop_bottom = 2;
+    }
+
+    if (crop_right != 0 || crop_bottom != 0) {
+        AVPacketSideData* sd_crop = av_realloc_array(avctx->coded_side_data, avctx->nb_coded_side_data + 1, sizeof(*sd_crop));
+        uint32_t* crop;
+
+        if (!sd_crop) {
+            av_log(ctx, AV_LOG_ERROR, "Can't allocate memory for amf av1 encoder crop information\n");
+            return AVERROR(ENOMEM);
+        }
+        avctx->coded_side_data = sd_crop;
+
+        crop = av_malloc(sizeof(uint32_t) * 4);
+        if (!crop) {
+            av_log(ctx, AV_LOG_ERROR, "Can't allocate memory for amf av1 encoder crop information\n");
+            return AVERROR(ENOMEM);
+        }
+
+        avctx->nb_coded_side_data++;
+
+        //top, bottom, left,right
+        AV_WL32A(crop + 0, 0);
+        AV_WL32A(crop + 1, crop_bottom);
+        AV_WL32A(crop + 2, 0);
+        AV_WL32A(crop + 3, crop_right);
+
+        avctx->coded_side_data[avctx->nb_coded_side_data - 1].type = AV_PKT_DATA_FRAME_CROPPING;
+        avctx->coded_side_data[avctx->nb_coded_side_data - 1].data = (uint8_t*)crop;
+        avctx->coded_side_data[avctx->nb_coded_side_data - 1].size = sizeof(uint32_t) * 4;
+    }
 
     return 0;
 }

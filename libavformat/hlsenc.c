@@ -2441,7 +2441,6 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
     int is_ref_pkt = 1;
     int ret = 0, can_split = 1, i, j;
     int stream_index = 0;
-    int subtitle_streams = 0;
     int range_length = 0;
     const char *proto = NULL;
     int use_temp_file = 0;
@@ -2449,6 +2448,7 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
     char *old_filename = NULL;
 
     for (i = 0; i < hls->nb_varstreams; i++) {
+        int subtitle_streams = 0;
         vs = &hls->var_streams[i];
         for (j = 0; j < vs->nb_streams; j++) {
             if (vs->streams[j]->codecpar->codec_type == AVMEDIA_TYPE_SUBTITLE) {
@@ -2617,8 +2617,10 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
                            " will retry with a new http session.\n");
                     ff_format_io_close(s, &vs->out);
                     ret = hlsenc_io_open(s, &vs->out, filename, &options);
-                    reflush_dynbuf(vs, &range_length);
-                    ret = hlsenc_io_close(s, &vs->out, filename);
+                    if (ret >= 0) {
+                        reflush_dynbuf(vs, &range_length);
+                        ret = hlsenc_io_close(s, &vs->out, filename);
+                    }
                 }
                 av_dict_free(&options);
                 av_freep(&vs->temp_buffer);
@@ -2628,6 +2630,9 @@ static int hls_write_packet(AVFormatContext *s, AVPacket *pkt)
             if (use_temp_file)
                 hls_rename_temp_file(s, oc);
         }
+
+        if (ret < 0)
+            return ret;
 
         old_filename = av_strdup(oc->url);
         if (!old_filename) {
