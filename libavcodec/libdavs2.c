@@ -164,7 +164,6 @@ static int davs2_dump_frames(AVCodecContext *avctx, davs2_picture_t *pic, int *g
     frame->height    = cad->headerset.height;
     frame->pts       = davs2_resolve_output_pts(avctx, cad, pic);
     frame->format    = avctx->pix_fmt;
-    frame->pkt_pos   = cad->out_frame.pos;
 
     *got_frame = 1;
     return 0;
@@ -236,14 +235,7 @@ static int davs2_decode_frame(AVCodecContext *avctx, AVFrame *frame,
     cad->packet.len  = buf_size;
     cad->packet.pts  = avpkt->pts;
     cad->packet.dts  = avpkt->dts;
-    cad->packet.pos  = avpkt->pos;
 
-    if (cad->packet.pos >= 0 && cad->last_packet_pos >= 0 &&
-        cad->packet.pos < cad->last_packet_pos)
-        cad->last_output_pts = AV_NOPTS_VALUE;
-
-    if (cad->packet.pos >= 0)
-        cad->last_packet_pos = cad->packet.pos;
 
     ret = davs2_decoder_send_packet(cad->decoder, &cad->packet);
 
