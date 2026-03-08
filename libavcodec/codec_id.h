@@ -564,6 +564,7 @@ enum AVCodecID {
     AV_CODEC_ID_OSQ,
     AV_CODEC_ID_QOA,
     AV_CODEC_ID_LC3,
+    AV_CODEC_ID_DRA,
     AV_CODEC_ID_G728,
     AV_CODEC_ID_AHX,
 

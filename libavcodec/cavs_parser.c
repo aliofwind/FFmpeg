@@ -25,6 +25,8 @@
  * @author Stefan Gehrer <stefan.gehrer@gmx.de>
  */
 
+#include <stdint.h>
+
 #include "parser.h"
 #include "cavs.h"
 #include "get_bits.h"
@@ -32,47 +34,108 @@
 #include "parser_internal.h"
 #include "startcode.h"
 
+typedef struct CAVSParseContext {
+    ParseContext pc;
+    int64_t last_seq_start;
+    int64_t last_pic_start;
+    int64_t frame_start_pos;
+    int64_t picture_start_pos;
+} CAVSParseContext;
 
-/**
- * Find the end of the current frame in the bitstream.
- * @return the position of the first byte of the next frame, or -1
- */
-static int cavs_find_frame_end(ParseContext *pc, const uint8_t *buf,
-                               int buf_size) {
+static av_cold int cavsvideo_parser_init(AVCodecParserContext *s)
+{
+    CAVSParseContext *ctx = s->priv_data;
+
+    ctx->last_seq_start = -1;
+    ctx->last_pic_start = -1;
+    ctx->frame_start_pos = -1;
+    ctx->picture_start_pos = -1;
+
+    return 0;
+}
+
+static void cavs_parser_parse_picture(AVCodecParserContext *s, CAVSParseContext *ctx,
+                                      const uint8_t *buf, int buf_size)
+{
+    uint32_t state = -1;
+
+    s->pict_type = AV_PICTURE_TYPE_NONE;
+    s->key_frame = -1;
+
+    for (int i = 0; i < buf_size; i++) {
+        state = (state << 8) | buf[i];
+        if (state == PIC_I_START_CODE) {
+            s->pict_type = AV_PICTURE_TYPE_I;
+            s->key_frame = 1;
+            if (ctx->frame_start_pos >= 0)
+                s->pos = ctx->frame_start_pos;
+            return;
+        }
+        if (state == PIC_PB_START_CODE) {
+            s->pict_type = AV_PICTURE_TYPE_P;
+            s->key_frame = 0;
+            if (ctx->picture_start_pos >= 0)
+                s->pos = ctx->picture_start_pos;
+            return;
+        }
+    }
+}
+
+static int cavs_find_frame_end(CAVSParseContext *ctx, const uint8_t *buf,
+                               int buf_size, AVCodecParserContext *s)
+{
+    ParseContext *pc = &ctx->pc;
     int pic_found, i;
     uint32_t state;
 
-    pic_found= pc->frame_start_found;
-    state= pc->state;
+    pic_found = pc->frame_start_found;
+    state = pc->state;
 
-    i=0;
-    if(!pic_found){
-        for(i=0; i<buf_size; i++){
-            state= (state<<8) | buf[i];
-            if(state == PIC_I_START_CODE || state == PIC_PB_START_CODE){
+    i = 0;
+    if (!pic_found) {
+        for (i = 0; i < buf_size; i++) {
+            int64_t start_pos;
+
+            state = (state << 8) | buf[i];
+            start_pos = s->cur_offset + i - 3;
+
+            if (state == CAVS_START_CODE)
+                ctx->last_seq_start = start_pos;
+
+            if (state == PIC_I_START_CODE || state == PIC_PB_START_CODE) {
+                ctx->picture_start_pos = start_pos;
+                ctx->frame_start_pos = start_pos;
+                if (state == PIC_I_START_CODE &&
+                    ctx->last_seq_start >= 0 &&
+                    ctx->last_seq_start > ctx->last_pic_start)
+                    ctx->frame_start_pos = ctx->last_seq_start;
+                ctx->last_pic_start = start_pos;
+
+                ff_fetch_timestamp(s, i - 3, 1, i > 3);
+                s->pos = state == PIC_I_START_CODE ?
+                         ctx->frame_start_pos : ctx->picture_start_pos;
                 i++;
-                pic_found=1;
+                pic_found = 1;
                 break;
             }
         }
     }
 
-    if(pic_found){
-        /* EOF considered as end of frame */
+    if (pic_found) {
         if (buf_size == 0)
             return 0;
-        for(; i<buf_size; i++){
-            state= (state<<8) | buf[i];
+        for (; i < buf_size; i++) {
+            state = (state << 8) | buf[i];
             if (state == PIC_I_START_CODE || state == PIC_PB_START_CODE ||
-                    state == CAVS_START_CODE) {
-                pc->frame_start_found=0;
-                pc->state=-1;
-                return i-3;
+                state == CAVS_START_CODE) {
+                pc->frame_start_found = 0;
+                pc->state = -1;
+                return i - 3;
             }
         }
     }
-    pc->frame_start_found= pic_found;
-    pc->state= state;
+    pc->frame_start_found = pic_found;
+    pc->state = state;
     return END_NOT_FOUND;
 }
 
@@ -161,13 +224,14 @@ static int cavsvideo_parse(AVCodecParserContext *s,
                            const uint8_t **poutbuf, int *poutbuf_size,
                            const uint8_t *buf, int buf_size)
 {
-    ParseContext *pc = s->priv_data;
+    CAVSParseContext *ctx = s->priv_data;
+    ParseContext *pc = &ctx->pc;
     int next;
 
-    if(s->flags & PARSER_FLAG_COMPLETE_FRAMES){
-        next= buf_size;
-    }else{
-        next= cavs_find_frame_end(pc, buf, buf_size);
+    if (s->flags & PARSER_FLAG_COMPLETE_FRAMES) {
+        next = buf_size;
+    } else {
+        next = cavs_find_frame_end(ctx, buf, buf_size, s);
 
         if (ff_combine_frame(pc, next, &buf, &buf_size) < 0) {
             *poutbuf = NULL;
@@ -180,12 +244,17 @@ static int cavsvideo_parse(AVCodecParserContext *s,
 
     *poutbuf = buf;
     *poutbuf_size = buf_size;
+
+    if (buf_size > 0)
+        cavs_parser_parse_picture(s, ctx, buf, buf_size);
+
     return next;
 }
 
 const FFCodecParser ff_cavsvideo_parser = {
     PARSER_CODEC_LIST(AV_CODEC_ID_CAVS),
-    .priv_data_size = sizeof(ParseContext),
+    .priv_data_size = sizeof(CAVSParseContext),
+    .parser_init    = cavsvideo_parser_init,
     .parse          = cavsvideo_parse,
     .close          = ff_parse_close,
 };

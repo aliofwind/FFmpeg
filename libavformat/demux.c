@@ -1291,7 +1291,9 @@ static int parse_packet(AVFormatContext *s, AVPacket *pkt,
         out_pkt->flags       |= pkt->flags & (AV_PKT_FLAG_DISCARD | AV_PKT_FLAG_CORRUPT);
 
         if (sti->need_parsing == AVSTREAM_PARSE_FULL_RAW)
-            out_pkt->pos = sti->parser->frame_offset;
+            out_pkt->pos = st->codecpar->codec_id == AV_CODEC_ID_CAVS &&
+                           sti->parser->pos >= 0 ?
+                           sti->parser->pos : sti->parser->frame_offset;
 
         if (sti->parser->key_frame == 1 ||
             (sti->parser->key_frame == -1 &&
@@ -1500,8 +1502,11 @@ static int read_frame_internal(AVFormatContext *s, AVPacket *pkt)
             compute_pkt_fields(s, st, NULL, pkt, AV_NOPTS_VALUE, AV_NOPTS_VALUE);
             if ((s->iformat->flags & AVFMT_GENERIC_INDEX) &&
                 (pkt->flags & AV_PKT_FLAG_KEY) && pkt->dts != AV_NOPTS_VALUE) {
+                int64_t index_ts = pkt->dts;
+                if (st->codecpar->codec_id == AV_CODEC_ID_CAVS && pkt->pts != AV_NOPTS_VALUE)
+                    index_ts = pkt->pts;
                 ff_reduce_index(s, st->index);
-                av_add_index_entry(st, pkt->pos, pkt->dts,
+                av_add_index_entry(st, pkt->pos, index_ts,
                                    0, 0, AVINDEX_KEYFRAME);
             }
             got_packet = 1;
@@ -1668,8 +1673,11 @@ int av_read_frame(AVFormatContext *s, AVPacket *pkt)
 return_packet:
     st = s->streams[pkt->stream_index];
     if ((s->iformat->flags & AVFMT_GENERIC_INDEX) && pkt->flags & AV_PKT_FLAG_KEY) {
+        int64_t index_ts = pkt->dts;
+        if (st->codecpar->codec_id == AV_CODEC_ID_CAVS && pkt->pts != AV_NOPTS_VALUE)
+            index_ts = pkt->pts;
         ff_reduce_index(s, st->index);
-        av_add_index_entry(st, pkt->pos, pkt->dts, 0, 0, AVINDEX_KEYFRAME);
+        av_add_index_entry(st, pkt->pos, index_ts, 0, 0, AVINDEX_KEYFRAME);
     }
 
     if (is_relative(pkt->dts))
