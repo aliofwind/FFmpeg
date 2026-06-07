@@ -28,8 +28,14 @@
 typedef uintptr_t LCEVC_DecoderHandle;
 #endif
 
+struct CodedBitstreamContext;
+struct CodedBitstreamFragment;
+
 typedef struct FFLCEVCContext {
     LCEVC_DecoderHandle decoder;
+    struct CodedBitstreamContext *cbc;
+    struct CodedBitstreamFragment *frag;
+    struct AVRefStructPool *frame_pool; ///< pool of FFLCEVCFrame
     int initialized;
 } FFLCEVCContext;
 
@@ -40,7 +46,9 @@ typedef struct FFLCEVCFrame {
     struct AVFrame *frame;
 } FFLCEVCFrame;
 
-int ff_lcevc_alloc(FFLCEVCContext **plcevc);
+int ff_lcevc_alloc(FFLCEVCContext **plcevc, void *logctx);
 int ff_lcevc_process(void *logctx, struct AVFrame *frame);
-void ff_lcevc_unref(void *opaque);
+int ff_lcevc_parse_frame(FFLCEVCContext *lcevc, const struct AVFrame *frame,
+                         enum AVPixelFormat *format, int *width, int *height, void *logctx);
+
 #endif /* AVCODEC_LCEVCDEC_H */

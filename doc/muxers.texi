@@ -1330,10 +1330,20 @@ element. Imply that the @option{single_file} option is set to
 @var{true}. In the template, @code{$ext$} is replaced with the file
 name extension specific for the segment format.
 
+@item availability_start_time_ms @var{milliseconds}
+Set the MPD @code{availabilityStartTime} attribute as Unix epoch time in
+milliseconds. If set to @code{0}, the wall clock is used when the first
+packet is written. This is useful for live outputs that need a stable
+availability start time across restarts.
+
 @item streaming @var{bool}
 Enable or disable chunk streaming mode of output. In chunk streaming
 mode, each frame will be a @code{moof} fragment which forms a
 chunk. This is disabled by default.
+
+@item suggested_presentation_delay @var{duration}
+Set the MPD @code{suggestedPresentationDelay} attribute. If set to
+@code{0}, the last segment duration is used.
 
 @item target_latency @var{target_latency}
 Set an intended target latency in seconds for serving (fractional
@@ -1759,7 +1769,7 @@ See also the @ref{framehash} and @ref{md5} muxers.
 Animated GIF muxer.
 
 Note that the GIF format has a very large time base: the delay between two frames can
-therefore not be smaller than one centi second.
+therefore not be smaller than one centisecond.
 
 @subsection Options
 @table @option
@@ -3069,7 +3079,7 @@ Default is @code{0x0001}.
 Set the @samp{original_network_id}. This is unique identifier of a
 network in DVB. Its main use is in the unique identification of a service
 through the path @samp{Original_Network_ID, Transport_Stream_ID}. Default
-is @code{0x0001}.
+is @code{0xff01}.
 
 @item mpegts_service_id @var{integer}
 Set the @samp{service_id}, also known as program in DVB. Default is
@@ -3096,6 +3106,8 @@ MPEG2 Digital HDTV service.
 Advanced Codec Digital SDTV service.
 @item advanced_codec_digital_hdtv
 Advanced Codec Digital HDTV service.
+@item hevc_digital_hdtv
+HEVC Digital Television service.
 @end table
 
 @item mpegts_pmt_start_pid @var{integer}
@@ -3270,6 +3282,19 @@ Serial value from which to set the streams serial number.
 Setting it to different and sufficiently large values ensures that the produced
 ogg files can be safely chained.
 
+@end table
+
+@section pdv
+
+Playdate Video muxer.
+
+This muxer writes the Playdate video container used by Panic's Playdate SDK.
+It requires a seekable output and a single PDV video stream.
+
+@table @option
+@item max_frames @var{frames}
+Reserve space for at most @var{frames} video frames in the file header. This
+option is mandatory.
 @end table
 
 @anchor{rcwtenc}
@@ -3950,6 +3975,10 @@ This muxer supports the following options:
 @item handshake_timeout @var{integer}
 Set the timeout in milliseconds for ICE and DTLS handshake.
 Default value is 5000.
+
+@item timeout @var{integer}
+Set timeout in seconds for socket I/O operations. Applicable only for HTTP output.
+Default value is -1.
 
 @item pkt_size @var{integer}
 Set the maximum size, in bytes, of RTP packets that send out.

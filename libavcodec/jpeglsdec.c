@@ -25,6 +25,7 @@
  * JPEG-LS decoder.
  */
 
+#include "libavutil/attributes.h"
 #include "libavutil/mem.h"
 #include "avcodec.h"
 #include "codec_internal.h"
@@ -77,6 +78,7 @@ int ff_jpegls_decode_lse(MJpegDecodeContext *s)
         break;
     case 2:
         s->palette_index = 0;
+        av_fallthrough;
     case 3:
         tid= bytestream2_get_byte(&s->gB);
         wt = bytestream2_get_byte(&s->gB);
@@ -499,7 +501,7 @@ int ff_jpegls_decode_picture(MJpegDecodeContext *s)
         if (s->bits <= 8) {
             uint8_t *src = s->picture_ptr->data[0];
 
-            for (i = 0; i < s->height; i++) {
+            for (i = 0; i < decoded_height; i++) {
                 switch(s->xfrm) {
                 case 1:
                     for (x = off; x + 2 < w; x += 3) {

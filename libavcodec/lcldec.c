@@ -42,6 +42,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "libavutil/attributes.h"
 #include "libavutil/mem.h"
 #include "libavutil/pixdesc.h"
 #include "avcodec.h"
@@ -175,7 +176,7 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
     int height = avctx->height; // Real image height
     unsigned int mszh_dlen;
     unsigned char yq, y1q, uq, vq;
-    int uqvq, ret;
+    int ret;
     unsigned int mthread_inlen, mthread_outlen;
     unsigned int len = buf_size;
     int linesize, offset;
@@ -239,11 +240,13 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
                 break;
             case IMGTYPE_YUV422:
                 aligned_width &= ~3;
+                av_fallthrough;
             case IMGTYPE_YUV211:
                 bppx2 = 4;
                 break;
             case IMGTYPE_YUV411:
                 aligned_width &= ~3;
+                av_fallthrough;
             case IMGTYPE_YUV420:
                 bppx2 = 3;
                 break;
@@ -306,7 +309,7 @@ static int decode_frame(AVCodecContext *avctx, AVFrame *frame,
             for (row = 0; row < height; row++) {
                 pixel_ptr = row * width * 3;
                 yq = encoded[pixel_ptr++];
-                uqvq = AV_RL16(encoded+pixel_ptr);
+                unsigned uqvq = AV_RL16(encoded+pixel_ptr);
                 pixel_ptr += 2;
                 for (col = 1; col < width; col++) {
                     encoded[pixel_ptr] = yq -= encoded[pixel_ptr];

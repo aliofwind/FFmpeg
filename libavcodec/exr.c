@@ -267,7 +267,9 @@ static int rle(uint8_t *dst, const uint8_t *src,
 static int rle_uncompress(const EXRContext *ctx, const uint8_t *src, int compressed_size,
                           int uncompressed_size, EXRThreadData *td)
 {
-    rle(td->tmp, src, compressed_size, uncompressed_size);
+    int ret = rle(td->tmp, src, compressed_size, uncompressed_size);
+    if (ret < 0)
+        return ret;
 
     av_assert1(uncompressed_size % 2 == 0);
 
@@ -636,6 +638,9 @@ static int piz_uncompress(const EXRContext *s, const uint8_t *src, int ssize,
         bytestream2_get_buffer(&gb, td->bitmap + min_non_zero,
                                max_non_zero - min_non_zero + 1);
     memset(td->bitmap + max_non_zero + 1, 0, BITMAP_SIZE - max_non_zero - 1);
+
+    if (bytestream2_get_bytes_left(&gb) < 4)
+        return AVERROR_INVALIDDATA;
 
     maxval = reverse_lut(td->bitmap, td->lut);
 

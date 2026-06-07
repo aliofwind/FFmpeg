@@ -106,6 +106,11 @@ static inline void ff_fmt_clear(SwsFormat *fmt)
  */
 SwsFormat ff_fmt_from_frame(const AVFrame *frame, int field);
 
+/**
+ * Subset of ff_fmt_from_frame() that sets default metadata for the format.
+ */
+void ff_fmt_from_pixfmt(enum AVPixelFormat pixfmt, SwsFormat *fmt);
+
 static inline int ff_color_equal(const SwsColor *c1, const SwsColor *c2)
 {
     return  c1->prim == c2->prim &&
@@ -144,7 +149,18 @@ static inline int ff_fmt_align(enum AVPixelFormat fmt)
     }
 }
 
-int ff_test_fmt(const SwsFormat *fmt, int output);
+/* Internal helper to test a format for either the legacy backend or the
+ * ops-based backends, depending on `backends` (must be nonzero). */
+int ff_sws_test_pixfmt_backend(const SwsBackend backends,
+                               enum AVPixelFormat format, int output);
+
+/**
+ * Statically test if a given format is supported by the given set of
+ * backends. This is a heuristic, which may have false positives if a
+ * specific backend does not actually implement all operations that would be
+ * required to support the format.
+ */
+int ff_test_fmt(SwsBackend backends, const SwsFormat *fmt, int output);
 
 /* Returns true if the formats are incomplete, false otherwise */
 bool ff_infer_colors(SwsColor *src, SwsColor *dst);
@@ -172,6 +188,23 @@ int ff_sws_decode_colors(SwsContext *ctx, SwsPixelType type, SwsOpList *ops,
 int ff_sws_encode_colors(SwsContext *ctx, SwsPixelType type, SwsOpList *ops,
                          const SwsFormat *src, const SwsFormat *dst,
                          bool *incomplete);
+
+/**
+ * Append a set of operations for scaling pixels to a different resolution.
+ *
+ * Returns 0 on success, or a negative error code on failure.
+ */
+int ff_sws_add_filters(SwsContext *ctx, SwsPixelType type, SwsOpList *ops,
+                       const SwsFormat *src, const SwsFormat *dst);
+
+/**
+ * Generate an SwsOpList defining a conversion from `src` to `dst`.
+ *
+ * Returns 0 on success, or a negative error code on failure.
+ */
+int ff_sws_op_list_generate(SwsContext *ctx, const SwsFormat *src,
+                            const SwsFormat *dst, SwsOpList **out_ops,
+                            bool *incomplete);
 
 /**
  * Represents a view into a single field of frame data.

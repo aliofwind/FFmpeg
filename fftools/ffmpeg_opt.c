@@ -645,6 +645,9 @@ static int opt_map(void *optctx, const char *opt, const char *arg)
             for (i = 0; i < o->nb_stream_maps; i++) {
                 m = &o->stream_maps[i];
                 if (file_idx == m->file_index &&
+                    !m->linklabel &&
+                    m->stream_index >= 0 &&
+                    m->stream_index < input_files[m->file_index]->nb_streams &&
                     stream_specifier_match(&ss,
                                            input_files[m->file_index]->ctx,
                                            input_files[m->file_index]->ctx->streams[m->stream_index],
@@ -1940,6 +1943,12 @@ const OptionDef options[] = {
         { .off = OFFSET(display_vflips) },
         "set display vertical flip for stream(s) "
         "(overrides any display rotation if it is not set)"},
+    { "mastering_display",          OPT_TYPE_STRING, OPT_VIDEO | OPT_PERSTREAM | OPT_INPUT | OPT_EXPERT,
+        { .off = OFFSET(mastering_displays) },
+        "set SMPTE2084 mastering display color volume info" },
+    { "content_light",              OPT_TYPE_STRING, OPT_VIDEO | OPT_PERSTREAM | OPT_INPUT | OPT_EXPERT,
+        { .off = OFFSET(content_lights) },
+        "set SMPTE2084 Max CLL and Max FALL values" },
     { "vn",                         OPT_TYPE_BOOL,   OPT_VIDEO | OPT_OFFSET | OPT_INPUT | OPT_OUTPUT,
         { .off = OFFSET(video_disable) },
         "disable video" },

@@ -258,18 +258,22 @@ SKIPHEADERS-$(CONFIG_SHADER_COMPRESSION) += zlib_utils.h
 TESTPROGS = adler32                                                     \
             aes                                                         \
             aes_ctr                                                     \
+            ambient_viewing_environment                                 \
             audio_fifo                                                  \
             avstring                                                    \
             base64                                                      \
             blowfish                                                    \
             bprint                                                      \
+            buffer                                                      \
             cast5                                                       \
             camellia                                                    \
             channel_layout                                              \
             color_utils                                                 \
             cpu                                                         \
             crc                                                         \
+            csp                                                         \
             des                                                         \
+            detection_bbox                                              \
             dict                                                        \
             display                                                     \
             encryption_info                                             \
@@ -277,7 +281,9 @@ TESTPROGS = adler32                                                     \
             eval                                                        \
             file                                                        \
             fifo                                                        \
+            film_grain_params                                           \
             hash                                                        \
+            hdr_dynamic_vivid_metadata                                  \
             hmac                                                        \
             hwdevice                                                    \
             integer                                                     \
@@ -285,6 +291,7 @@ TESTPROGS = adler32                                                     \
             lfg                                                         \
             lls                                                         \
             log                                                         \
+            mathematics                                                 \
             md5                                                         \
             murmur3                                                     \
             opt                                                         \
@@ -295,15 +302,23 @@ TESTPROGS = adler32                                                     \
             pixfmt_best                                                 \
             random_seed                                                 \
             rational                                                    \
+            rc4                                                         \
             ripemd                                                      \
             sha                                                         \
             sha512                                                      \
+            samplefmt                                                   \
             side_data_array                                             \
             softfloat                                                   \
+            spherical                                                   \
+            stereo3d                                                    \
+            tdrdi                                                       \
+            timecode                                                    \
+            timestamp                                                   \
             tree                                                        \
             twofish                                                     \
             utf8                                                        \
             uuid                                                        \
+            video_enc_params                                            \
             xtea                                                        \
             tea                                                         \
 
