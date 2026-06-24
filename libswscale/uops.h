@@ -78,6 +78,19 @@ enum {
      ((W) ? SWS_COMP(3) : 0))
 };
 
+
+#define ff_sws_comp_mask_str(mask) ff_sws_comp_mask_print(mask, (char[5]){0})
+static inline char *ff_sws_comp_mask_print(SwsCompMask mask, char buf[5])
+{
+    char *ptr = buf;
+    for (int c = 0; c < 4; c++) {
+        if (SWS_COMP_TEST(mask, c))
+            *ptr++ = "xyzw"[c];
+    }
+    *ptr = '\0';
+    return buf;
+}
+
 typedef uint32_t SwsUOpFlags;
 typedef enum SwsUOpFlagBits {
     SWS_UOP_FLAG_NONE = 0,
@@ -96,6 +109,7 @@ typedef enum SwsUOpType {
     SWS_UOP_READ_PACKED,     /* simple packed byte-aligned read */
     SWS_UOP_READ_NIBBLE,     /* fractional read (4 bits) from single plane */
     SWS_UOP_READ_BIT,        /* fractional read (1 bit) from single plane */
+    SWS_UOP_READ_PALETTE,    /* indexed read from palette in plane 1 */
 
     SWS_UOP_WRITE_PLANAR,    /* simple planar byte-aligned write */
     SWS_UOP_WRITE_PACKED,    /* simple packed byte-aligned write */

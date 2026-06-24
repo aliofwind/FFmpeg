@@ -985,11 +985,7 @@ int ist_use(InputStream *ist, int decoding_needed,
 
         ds->dec_opts.flags |= (!!ist->fix_sub_duration * DECODER_FLAG_FIX_SUB_DURATION) |
                               (!!is_unreliable * DECODER_FLAG_TS_UNRELIABLE) |
-                              (!!(d->loop && is_audio) * DECODER_FLAG_SEND_END_TS)
-#if FFMPEG_OPT_TOP
-                              | ((ist->top_field_first >= 0) * DECODER_FLAG_TOP_FIELD_FIRST)
-#endif
-                             ;
+                              (!!(d->loop && is_audio) * DECODER_FLAG_SEND_END_TS);
 
         if (ist->framerate.num) {
             ds->dec_opts.flags     |= DECODER_FLAG_FRAMERATE_FORCED;
@@ -1650,12 +1646,6 @@ static int ist_add(const OptionsContext *o, Demuxer *d, AVStream *st, AVDictiona
                 return ret;
             }
         }
-
-#if FFMPEG_OPT_TOP
-        ist->top_field_first = -1;
-        opt_match_per_stream_int(ist, &o->top_field_first, ic, st, &ist->top_field_first);
-#endif
-
         break;
     case AVMEDIA_TYPE_AUDIO: {
         const char *ch_layout_str = NULL;
@@ -1801,6 +1791,11 @@ static int istg_parse_tile_grid(const OptionsContext *o, Demuxer *d, InputStream
 
     if (tg->nb_tiles == 1)
         return 0;
+    if (!tg->nb_tiles) {
+        av_log(istg, AV_LOG_FATAL, "A demuxer exported an invalid tile group stream group. "
+                                   "This is a bug, please report it.\n");
+        return AVERROR_BUG;
+    }
 
     memset(&opts, 0, sizeof(opts));
 

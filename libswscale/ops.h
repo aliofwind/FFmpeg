@@ -57,7 +57,7 @@ typedef enum SwsOpType {
     SWS_OP_LINEAR,          /* generalized linear affine transform */
     SWS_OP_DITHER,          /* add dithering noise */
 
-    /* Filtering operations. Always output floating point. */
+    /* Filtering operations. */
     SWS_OP_FILTER_H,        /* horizontal filtering */
     SWS_OP_FILTER_V,        /* vertical filtering */
 
@@ -74,6 +74,8 @@ typedef enum SwsCompFlags {
     SWS_COMP_EXACT   = 1 << 1, /* value is an exact integer */
     SWS_COMP_ZERO    = 1 << 2, /* known to be a constant zero */
     SWS_COMP_SWAPPED = 1 << 3, /* byte order is swapped */
+    SWS_COMP_COPY    = 1 << 4, /* value is unmodified from the source plane */
+    SWS_COMP_CONST   = 1 << 5, /* value is a fixed constant */
 } SwsCompFlags;
 
 typedef struct SwsComps {
@@ -96,6 +98,7 @@ typedef enum SwsReadWriteMode {
      */
     SWS_RW_PLANAR,  /* one plane per component */
     SWS_RW_PACKED,  /* all components on a single plane */
+    SWS_RW_PALETTE, /* plane 0 is 8-bit index, plane 1 is packed palette */
 } SwsReadWriteMode;
 
 typedef struct SwsReadWriteOp {
@@ -106,6 +109,7 @@ typedef struct SwsReadWriteOp {
      *   rgb565    = 1x u16   <- use SWS_OP_UNPACK to unpack
      *   monow     = 1x u8 (frac 3)
      *   rgb4      = 1x u8 (frac 1)
+     *   pal8      = 4x u8 (palette)
      */
     SwsReadWriteMode mode; /* how data is laid out in memory */
     uint8_t elems; /* number of elements (of type `op.type`) to read/write */
@@ -146,7 +150,7 @@ typedef struct SwsSwizzleOp {
 } SwsSwizzleOp;
 
 #define SWS_SWIZZLE(X,Y,Z,W) ((SwsSwizzleOp) { .in = {X, Y, Z, W} })
-SwsCompMask ff_sws_comp_mask_swizzle(SwsCompMask mask, SwsSwizzleOp swiz);
+void ff_sws_comp_mask_swizzle(SwsCompMask *mask, const SwsSwizzleOp *swiz);
 
 typedef struct SwsShiftOp {
     uint8_t amount; /* number of bits to shift */
@@ -216,7 +220,7 @@ enum {
 };
 
 /* Helper function to compute the correct mask */
-uint32_t ff_sws_linear_mask(SwsLinearOp);
+uint32_t ff_sws_linear_mask(const SwsLinearOp *c);
 
 typedef struct SwsFilterOp {
     SwsFilterWeights *kernel; /* filter kernel (refstruct) */
@@ -359,11 +363,6 @@ void ff_sws_op_list_update_comps(SwsOpList *ops);
  * some operations with more efficient alternatives.
  */
 int ff_sws_op_list_optimize(SwsOpList *ops);
-
-enum SwsOpCompileFlags {
-    /* Automatically optimize the operations when compiling */
-    SWS_OP_FLAG_OPTIMIZE = 1 << 0,
-};
 
 /**
  * Helper function to enumerate over all possible (optimized) operation lists,

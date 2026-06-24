@@ -388,6 +388,7 @@ SwsFormat ff_fmt_from_frame(const AVFrame *frame, int field)
     if (frame->flags & AV_FRAME_FLAG_INTERLACED) {
         fmt.height = (fmt.height + (field == FIELD_TOP)) >> 1;
         fmt.interlaced = 1;
+        fmt.field = field;
     }
 
     /* Set luminance and gamut information */
@@ -680,10 +681,24 @@ void ff_sws_frame_from_avframe(SwsFrame *dst, const AVFrame *src)
 
 #if CONFIG_UNSTABLE
 
+/**
+ * Returns the underlying descriptor for fake formats like PAL8 whose
+ * descriptors alone do not fully describe the pixel data.
+ */
+static inline const AVPixFmtDescriptor *fmt_desc_decoded(enum AVPixelFormat fmt)
+{
+    if (fmt == AV_PIX_FMT_PAL8)
+        return av_pix_fmt_desc_get(AV_PIX_FMT_RGB32);
+
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
+    av_assert0(!(desc->flags & AV_PIX_FMT_FLAG_PAL));
+    return desc;
+}
+
 /* Returns the type suitable for a pixel after fully decoding/unpacking it */
 static SwsPixelType fmt_pixel_type(enum AVPixelFormat fmt)
 {
-    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
+    const AVPixFmtDescriptor *desc = fmt_desc_decoded(fmt);
     const int bits = FFALIGN(desc->comp[0].depth, 8);
     if (desc->flags & AV_PIX_FMT_FLAG_FLOAT) {
         switch (bits) {
@@ -823,6 +838,18 @@ static FmtInfo fmt_info_irregular(enum AVPixelFormat fmt)
     case AV_PIX_FMT_XV48LE:
     case AV_PIX_FMT_XV48BE:
         return PACKED_FMT(UYVA, 4);
+
+    /* Miscellaneous irregular formats */
+    case AV_PIX_FMT_PAL8:
+        return (FmtInfo) {
+            .rw = { .elems = 4, .mode = SWS_RW_PALETTE },
+            /* PAL8 is explicitly defined as endian-dependent */
+        #if AV_HAVE_BIGENDIAN
+            .swizzle = ARGB,
+        #else
+            .swizzle = BGRA,
+        #endif
+        };
     }
 
     return (FmtInfo) {0};
@@ -936,17 +963,22 @@ static int test_format_ops(enum AVPixelFormat format, int output)
     SwsPixelType pixel_type, raw_type;
     int ret = fmt_analyze(format, &rw, &pack, &swizzle, &shift,
                           &pixel_type, &raw_type);
-    return ret == 0;
+    if (ret < 0)
+        return 0;
+    if (rw.mode == SWS_RW_PALETTE && output)
+        return 0; /* palettes are currently only supported as input */
+    return 1;
 }
 
-static SwsSwizzleOp swizzle_inv(SwsSwizzleOp swiz) {
+static void swizzle_inv(SwsSwizzleOp *swiz)
+{
     /* Input[x] =: Output[swizzle.x] */
-    unsigned out[4];
-    out[swiz.x] = 0;
-    out[swiz.y] = 1;
-    out[swiz.z] = 2;
-    out[swiz.w] = 3;
-    return (SwsSwizzleOp) {{ .x = out[0], out[1], out[2], out[3] }};
+    unsigned tmp[4];
+    tmp[swiz->x] = 0;
+    tmp[swiz->y] = 1;
+    tmp[swiz->z] = 2;
+    tmp[swiz->w] = 3;
+    *swiz = (SwsSwizzleOp) {{ .x = tmp[0], tmp[1], tmp[2], tmp[3] }};
 }
 
 /**
@@ -957,9 +989,9 @@ static SwsSwizzleOp swizzle_inv(SwsSwizzleOp swiz) {
  * it will end up getting pushed towards the output or optimized away entirely
  * by the optimization pass.
  */
-static SwsClearOp fmt_clear(enum AVPixelFormat fmt)
+static SwsClearOp fmt_clear(const SwsFormat *fmt)
 {
-    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
+    const AVPixFmtDescriptor *desc = fmt_desc_decoded(fmt->format);
     const bool has_chroma = desc->nb_components >= 3;
     const bool has_alpha  = desc->flags & AV_PIX_FMT_FLAG_ALPHA;
 
@@ -983,9 +1015,9 @@ static SwsClearOp fmt_clear(enum AVPixelFormat fmt)
 #  define NATIVE_ENDIAN_FLAG 0
 #endif
 
-int ff_sws_decode_pixfmt(SwsOpList *ops, enum AVPixelFormat fmt)
+int ff_sws_decode_pixfmt(SwsOpList *ops, const SwsFormat *fmt)
 {
-    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
+    const AVPixFmtDescriptor *desc = fmt_desc_decoded(fmt->format);
     SwsPixelType pixel_type, raw_type;
     SwsReadWriteOp rw_op;
     SwsSwizzleOp swizzle;
@@ -993,10 +1025,10 @@ int ff_sws_decode_pixfmt(SwsOpList *ops, enum AVPixelFormat fmt)
     SwsComps *comps = &ops->comps_src;
     SwsShiftOp shift;
 
-    RET(fmt_analyze(fmt, &rw_op, &unpack, &swizzle, &shift,
+    RET(fmt_analyze(fmt->format, &rw_op, &unpack, &swizzle, &shift,
                     &pixel_type, &raw_type));
 
-    swizzle = swizzle_inv(swizzle);
+    swizzle_inv(&swizzle);
 
     /* Set baseline pixel content flags */
     const int integer = ff_sws_pixel_type_is_int(raw_type);
@@ -1072,17 +1104,20 @@ int ff_sws_decode_pixfmt(SwsOpList *ops, enum AVPixelFormat fmt)
     return 0;
 }
 
-int ff_sws_encode_pixfmt(SwsOpList *ops, enum AVPixelFormat fmt)
+int ff_sws_encode_pixfmt(SwsOpList *ops, const SwsFormat *fmt)
 {
-    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
+    const AVPixFmtDescriptor *desc = fmt_desc_decoded(fmt->format);
     SwsPixelType pixel_type, raw_type;
     SwsReadWriteOp rw_op;
     SwsSwizzleOp swizzle;
     SwsPackOp pack;
     SwsShiftOp shift;
 
-    RET(fmt_analyze(fmt, &rw_op, &pack, &swizzle, &shift,
+    RET(fmt_analyze(fmt->format, &rw_op, &pack, &swizzle, &shift,
                     &pixel_type, &raw_type));
+
+    if (rw_op.mode == SWS_RW_PALETTE)
+        return AVERROR(ENOTSUP);
 
     if (shift.amount) {
         RET(ff_sws_op_list_append(ops, &(SwsOp) {
@@ -1154,23 +1189,24 @@ static SwsLinearOp fmt_encode_range(const SwsFormat *fmt, bool *incomplete)
         { Q0, Q0, Q0, Q1, Q0 },
     }};
 
-    const int depth0 = fmt->desc->comp[0].depth;
-    const int depth1 = fmt->desc->comp[1].depth;
-    const int depth2 = fmt->desc->comp[2].depth;
-    const int depth3 = fmt->desc->comp[3].depth;
+    const AVPixFmtDescriptor *desc = fmt_desc_decoded(fmt->format);
+    const int depth0 = desc->comp[0].depth;
+    const int depth1 = desc->comp[1].depth;
+    const int depth2 = desc->comp[2].depth;
+    const int depth3 = desc->comp[3].depth;
 
-    if (fmt->desc->flags & AV_PIX_FMT_FLAG_FLOAT)
+    if (desc->flags & AV_PIX_FMT_FLAG_FLOAT)
         return c; /* floats are directly output as-is */
 
     av_assert0(depth0 < 32 && depth1 < 32 && depth2 < 32 && depth3 < 32);
-    if (fmt->csp == AVCOL_SPC_RGB || (fmt->desc->flags & AV_PIX_FMT_FLAG_XYZ)) {
+    if (fmt->csp == AVCOL_SPC_RGB || (desc->flags & AV_PIX_FMT_FLAG_XYZ)) {
         c.m[0][0] = Q((1 << depth0) - 1);
         c.m[1][1] = Q((1 << depth1) - 1);
         c.m[2][2] = Q((1 << depth2) - 1);
     } else if (fmt->range == AVCOL_RANGE_JPEG) {
         /* Full range YUV */
         c.m[0][0] = Q((1 << depth0) - 1);
-        if (fmt->desc->nb_components >= 3) {
+        if (desc->nb_components >= 3) {
             /* This follows the ITU-R convention, which is slightly different
              * from the JFIF convention. */
             c.m[1][1] = Q((1 << depth1) - 1);
@@ -1184,7 +1220,7 @@ static SwsLinearOp fmt_encode_range(const SwsFormat *fmt, bool *incomplete)
             *incomplete = true;
         c.m[0][0] = Q(219 << (depth0 - 8));
         c.m[0][4] = Q( 16 << (depth0 - 8));
-        if (fmt->desc->nb_components >= 3) {
+        if (desc->nb_components >= 3) {
             c.m[1][1] = Q(224 << (depth1 - 8));
             c.m[2][2] = Q(224 << (depth2 - 8));
             c.m[1][4] = Q(128 << (depth1 - 8));
@@ -1192,8 +1228,8 @@ static SwsLinearOp fmt_encode_range(const SwsFormat *fmt, bool *incomplete)
         }
     }
 
-    if (fmt->desc->flags & AV_PIX_FMT_FLAG_ALPHA) {
-        const bool is_ya = fmt->desc->nb_components == 2;
+    if (desc->flags & AV_PIX_FMT_FLAG_ALPHA) {
+        const bool is_ya = desc->nb_components == 2;
         c.m[3][3] = Q((1 << (is_ya ? depth1 : depth3)) - 1);
     }
 
@@ -1203,7 +1239,7 @@ static SwsLinearOp fmt_encode_range(const SwsFormat *fmt, bool *incomplete)
         c.m[0][0] = av_neg_q(c.m[0][0]);
     }
 
-    c.mask = ff_sws_linear_mask(c);
+    c.mask = ff_sws_linear_mask(&c);
     return c;
 }
 
@@ -1222,7 +1258,7 @@ static SwsLinearOp fmt_decode_range(const SwsFormat *fmt, bool *incomplete)
     if (!(fmt->desc->flags & AV_PIX_FMT_FLAG_ALPHA))
         c.m[3][4] = Q1;
 
-    c.mask = ff_sws_linear_mask(c);
+    c.mask = ff_sws_linear_mask(&c);
     return c;
 }
 
@@ -1343,7 +1379,8 @@ static int fmt_dither(SwsContext *ctx, SwsOpList *ops,
             dither.y_offset[i] = offsets_16x16[i];
         }
 
-        if (src->desc->nb_components < 3 && bpc >= 8) {
+        const AVPixFmtDescriptor *src_desc = fmt_desc_decoded(src->format);
+        if (src_desc->nb_components < 3 && bpc >= 8) {
             /**
              * For high-bit-depth sources without chroma, use same matrix
              * offset for all color channels. This prevents introducing color
@@ -1388,8 +1425,49 @@ linear_mat3(const AVRational m00, const AVRational m01, const AVRational m02,
         {  Q0,  Q0,  Q0, Q1, Q0 },
     }};
 
-    c.mask = ff_sws_linear_mask(c);
+    c.mask = ff_sws_linear_mask(&c);
     return c;
+}
+
+void ff_sws_chroma_pos(const SwsFormat *fmt, bool *incomplete,
+                       int *out_x_pos, int *out_y_pos)
+{
+    enum AVChromaLocation chroma_loc = fmt->loc;
+    const int sub_x = fmt->desc->log2_chroma_w;
+    const int sub_y = fmt->desc->log2_chroma_h;
+    int x_pos, y_pos;
+
+    /* Explicitly default to center siting for compatibility with swscale */
+    if (chroma_loc == AVCHROMA_LOC_UNSPECIFIED) {
+        chroma_loc = AVCHROMA_LOC_CENTER;
+        *incomplete |= sub_x || sub_y;
+    }
+
+    /* av_chroma_location_enum_to_pos() always gives us values in the range from
+     * 0 to 256, but we need to adjust this to the true value range of the
+     * subsampling grid, which may be larger for h/v_sub > 1 */
+    av_chroma_location_enum_to_pos(&x_pos, &y_pos, chroma_loc);
+    x_pos *= (1 << sub_x) - 1;
+    y_pos *= (1 << sub_y) - 1;
+
+    /* Fix vertical chroma position for interlaced frames */
+    if (sub_y && fmt->interlaced) {
+        /* When vertically subsampling, chroma samples are effectively only
+         * placed next to even rows. To access them from the odd field, we need
+         * to account for this shift by offsetting the distance of one luma row.
+         *
+         * For 4x vertical subsampling (v_sub == 2), they are only placed
+         * next to every *other* even row, so we need to shift by three luma
+         * rows to get to the chroma sample. */
+        if (fmt->field == FIELD_BOTTOM)
+            y_pos += (256 << sub_y) - 256;
+
+        /* Luma row distance is doubled for fields, so halve offsets */
+        y_pos >>= 1;
+    }
+
+    *out_x_pos = x_pos;
+    *out_y_pos = y_pos;
 }
 
 int ff_sws_decode_colors(SwsContext *ctx, SwsPixelType type,
@@ -1679,7 +1757,7 @@ int ff_sws_op_list_generate(SwsContext *ctx, const SwsFormat *src,
     ops->dst = *dst;
 
     const SwsPixelType type = SWS_PIXEL_F32;
-    int ret = ff_sws_decode_pixfmt(ops, src->format);
+    int ret = ff_sws_decode_pixfmt(ops, src);
     if (ret < 0)
         goto fail;
     ret = ff_sws_decode_colors(ctx, type, ops, src, incomplete);
@@ -1691,7 +1769,7 @@ int ff_sws_op_list_generate(SwsContext *ctx, const SwsFormat *src,
     ret = ff_sws_encode_colors(ctx, type, ops, src, dst, incomplete);
     if (ret < 0)
         goto fail;
-    ret = ff_sws_encode_pixfmt(ops, dst->format);
+    ret = ff_sws_encode_pixfmt(ops, dst);
     if (ret < 0)
         goto fail;
 

@@ -38,25 +38,26 @@
 #include "libavutil/stereo3d.h"
 #include "libavutil/tdrdi.h"
 #include "libavutil/timecode.h"
+#include "libavutil/refstruct.h"
 
-#include "aom_film_grain.h"
-#include "bswapdsp.h"
-#include "cabac_functions.h"
-#include "codec_internal.h"
-#include "decode.h"
-#include "golomb.h"
-#include "h274.h"
+#include "libavcodec/aom_film_grain.h"
+#include "libavcodec/bswapdsp.h"
+#include "libavcodec/cabac_functions.h"
+#include "libavcodec/codec_internal.h"
+#include "libavcodec/decode.h"
+#include "libavcodec/golomb.h"
+#include "libavcodec/h274.h"
+#include "libavcodec/hwaccel_internal.h"
+#include "libavcodec/hwconfig.h"
+#include "libavcodec/internal.h"
+#include "libavcodec/profiles.h"
+#include "libavcodec/progressframe.h"
+#include "libavcodec/thread.h"
+#include "libavcodec/threadprogress.h"
+
 #include "hevc.h"
 #include "parse.h"
 #include "hevcdec.h"
-#include "hwaccel_internal.h"
-#include "hwconfig.h"
-#include "internal.h"
-#include "profiles.h"
-#include "progressframe.h"
-#include "libavutil/refstruct.h"
-#include "thread.h"
-#include "threadprogress.h"
 
 static const uint8_t hevc_pel_weight[65] = { [2] = 0, [4] = 1, [6] = 2, [8] = 3, [12] = 4, [16] = 5, [24] = 6, [32] = 7, [48] = 8, [64] = 9 };
 
@@ -388,26 +389,11 @@ static int export_stream_params_from_sei(HEVCContext *s)
 {
     AVCodecContext *avctx = s->avctx;
 
-#if FF_API_CODEC_PROPS
-FF_DISABLE_DEPRECATION_WARNINGS
-    if (s->sei.common.itut_t35.a53_cc)
-        s->avctx->properties |= FF_CODEC_PROPERTY_CLOSED_CAPTIONS;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
-
     if (s->sei.common.alternative_transfer.present &&
         av_color_transfer_name(s->sei.common.alternative_transfer.preferred_transfer_characteristics) &&
         s->sei.common.alternative_transfer.preferred_transfer_characteristics != AVCOL_TRC_UNSPECIFIED) {
         avctx->color_trc = s->sei.common.alternative_transfer.preferred_transfer_characteristics;
     }
-
-#if FF_API_CODEC_PROPS
-FF_DISABLE_DEPRECATION_WARNINGS
-    if ((s->sei.common.film_grain_characteristics && s->sei.common.film_grain_characteristics->present) ||
-        s->sei.common.itut_t35.aom_film_grain.enable)
-        avctx->properties |= FF_CODEC_PROPERTY_FILM_GRAIN;
-FF_ENABLE_DEPRECATION_WARNINGS
-#endif
 
     return 0;
 }
