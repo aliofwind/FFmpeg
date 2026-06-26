@@ -957,7 +957,6 @@ const FFCodec ff_cavs_decoder = {
     .p.capabilities   = AV_CODEC_CAP_DELAY | AV_CODEC_CAP_OTHER_THREADS,
     .caps_internal  = FF_CODEC_CAP_AUTO_THREADS | FF_CODEC_CAP_SETS_FRAME_PROPS |
                       FF_CODEC_CAP_SETS_PKT_DTS,
-    .p.pix_fmts     = (const enum AVPixelFormat[]) { AV_PIX_FMT_YUV420P,
-                                                     AV_PIX_FMT_NONE },
+    CODEC_PIXFMTS(AV_PIX_FMT_YUV420P),
     .flush          = cavs_flush,
 };
