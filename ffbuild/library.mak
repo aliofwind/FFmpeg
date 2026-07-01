@@ -86,19 +86,20 @@ $(SUBDIR)$(SLIBNAME): $(SUBDIR)$(SLIBNAME_WITH_MAJOR)
 	$(Q)cd ./$(SUBDIR) && $(LN_S) $(SLIBNAME_WITH_MAJOR) $(SLIBNAME)
 
 $(SUBDIR)$(SLIBNAME_WITH_MAJOR): $(OBJS) $(SHLIBOBJS) $(SUBDIR)lib$(NAME).ver
-	$(SLIB_CREATE_DEF_CMD)
 ifeq ($(RESPONSE_FILES),yes)
 ifeq ($(HAVE_BUILTIN_FILE),yes)
 	$$(file >$$@.objs,$$(filter %.o,$$^))
 else
 	$(Q)echo $$(filter %.o,$$^) > $$@.objs
 endif
-
+endif
+	$(Q)$(SLIB_CREATE_DEF_CMD)
+ifeq ($(RESPONSE_FILES),yes)
 	$$(call LINK,$$(call $(NAME)LINK_SO_ARGS) $$(LD_O) @$$@.objs $$(call $(NAME)LINK_EXTRA))
 else
 	$$(call LINK,$$(call $(NAME)LINK_SO_ARGS) $$(LD_O) $$(filter %.o,$$^) $$(call $(NAME)LINK_EXTRA))
 endif
-	$(SLIB_EXTRA_CMD)
+	$(Q)$(SLIB_EXTRA_CMD)
 	-$(RM) $$@.objs
 
 ifdef SUBDIR
@@ -112,7 +113,9 @@ clean::
 install-lib$(NAME)-shared: $(SUBDIR)$(SLIBNAME)
 	$(Q)mkdir -p "$(SHLIBDIR)"
 	$$(INSTALL) -m 755 $$< "$(SHLIBDIR)/$(SLIB_INSTALL_NAME)"
+ifneq ($(STRIPTYPE),nostrip)
 	$$(STRIP) "$(SHLIBDIR)/$(SLIB_INSTALL_NAME)"
+endif
 	$(Q)$(foreach F,$(SLIB_INSTALL_LINKS),(cd "$(SHLIBDIR)" && $(LN_S) $(SLIB_INSTALL_NAME) $(F));)
 	$(if $(SLIB_INSTALL_EXTRA_SHLIB),$$(INSTALL) -m 644 $(SLIB_INSTALL_EXTRA_SHLIB:%=$(SUBDIR)%) "$(SHLIBDIR)")
 	$(if $(SLIB_INSTALL_EXTRA_LIB),$(Q)mkdir -p "$(LIBDIR)")
