@@ -253,8 +253,6 @@ SKIPHEADERS-$(CONFIG_VDPAU)            += hwcontext_vdpau.h
 SKIPHEADERS-$(CONFIG_VULKAN)           += hwcontext_vulkan.h vulkan.h   \
                                           vulkan_functions.h            \
                                           vulkan_loader.h
-SKIPHEADERS-$(CONFIG_LIBSHADERC)       += vulkan_spirv.h
-SKIPHEADERS-$(CONFIG_LIBGLSLANG)       += vulkan_spirv.h
 SKIPHEADERS-$(CONFIG_SHADER_COMPRESSION) += zlib_utils.h
 
 TESTPROGS = adler32                                                     \
@@ -278,6 +276,7 @@ TESTPROGS = adler32                                                     \
             detection_bbox                                              \
             dict                                                        \
             display                                                     \
+            dovi_meta                                                   \
             encryption_info                                             \
             error                                                       \
             eval                                                        \
@@ -293,6 +292,7 @@ TESTPROGS = adler32                                                     \
             lfg                                                         \
             lls                                                         \
             log                                                         \
+            mastering_display_metadata                                  \
             mathematics                                                 \
             md5                                                         \
             murmur3                                                     \
@@ -321,9 +321,11 @@ TESTPROGS = adler32                                                     \
             utf8                                                        \
             uuid                                                        \
             video_enc_params                                            \
+            video_hint                                                  \
             xtea                                                        \
             tea                                                         \
 
+TESTPROGS-$(CONFIG_CUDA)             += hwcontext_cuda
 TESTPROGS-$(HAVE_THREADS)            += cpu_init
 TESTPROGS-$(HAVE_LZO1X_999_COMPRESS) += lzo
 

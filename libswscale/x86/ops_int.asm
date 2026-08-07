@@ -733,7 +733,12 @@ IF W,   packuswb %4, m11
 %macro SCALE 0
         LOAD_CONT tmp0q
 %if BITS == 8
+%if cpuflag(avx2)
         vpbroadcastw m12, [implq + SwsOpImpl.priv]
+%else
+        movd xm12, [implq + SwsOpImpl.priv]
+        SPLATW m12, xm12, 0
+%endif
         pxor m15, m15
         scale8 mx,  my,  mz,  mw,  m12
 IF1 V2, scale8 mx2, my2, mz2, mw2, m12
@@ -776,7 +781,8 @@ assert 0, SWS_UOP_DITHER is not implemented for integer types
     DECL_%1_WRITE_PACKED    (WRITE_PACKED)
     DECL_%1_WRITE_NIBBLE    (WRITE_NIBBLE)
     DECL_%1_WRITE_BIT       (WRITE_BIT)
-    DECL_%1_MOVE            (MOVE)
+    DECL_%1_PERMUTE         (MOVE)
+    DECL_%1_COPY            (MOVE)
     DECL_%1_SWAP_BYTES      (SWAP_BYTES)
     DECL_%1_EXPAND_BIT      (EXPAND_BIT)
     DECL_%1_SCALE           (SCALE)

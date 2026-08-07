@@ -29,6 +29,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+      - name: Rebase onto target branch
+        uses: ./.forgejo/actions/rebase-pr
       - name: Configure
         run: |
           ./configure --enable-gpl --enable-nonfree --enable-memory-poisoning --assert-level=2 \
@@ -86,10 +88,14 @@ jobs:
         uses: actions/checkout@v6
         with:
           path: ffmpeg
+      - name: Rebase onto target branch
+        uses: ./ffmpeg/.forgejo/actions/rebase-pr
+        with:
+          path: ffmpeg
       - name: Configure
         run: |
           mkdir build && cd build
-          ../ffmpeg/configure --pkg-config-flags="--static" $FFBUILD_TARGET_FLAGS $FF_CONFIGURE \
+          ../ffmpeg/configure --pkg-config-flags="--static" $FFBUILD_TARGET_FLAGS ${FF_CONFIGURE/--enable-libshaderc/} \
               --cc="$CC" --cxx="$CXX" --ar="$AR" --ranlib="$RANLIB" --nm="$NM" \
               --extra-cflags="$FF_CFLAGS" --extra-cxxflags="$FF_CXXFLAGS" \
               --extra-libs="$FF_LIBS" --extra-ldflags="$FF_LDFLAGS" --extra-ldexeflags="$FF_LDEXEFLAGS" \

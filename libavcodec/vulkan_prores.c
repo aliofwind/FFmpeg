@@ -36,7 +36,7 @@ const FFVulkanDecodeDescriptor ff_vk_dec_prores_desc = {
 typedef struct ProresVulkanDecodePicture {
     FFVulkanDecodePicture vp;
 
-    AVBufferRef *metadata_buf;
+    FFVkBuffer *metadata_buf;
 
     uint32_t bitstream_start;
     uint32_t bitstream_size;
@@ -50,7 +50,7 @@ typedef struct ProresVulkanDecodeContext {
     FFVulkanShader vld;
     FFVulkanShader idct;
 
-    AVBufferPool *metadata_pool;
+    AVRefStructPool *metadata_pool;
 } ProresVulkanDecodeContext;
 
 typedef struct ProresVkParameters {
@@ -97,7 +97,7 @@ static int vk_prores_start_frame(AVCodecContext          *avctx,
     /* Host map the input slices data if supported */
     if (!vp->slices_buf && ctx->s.extensions & FF_VK_EXT_EXTERNAL_HOST_MEMORY)
         RET(ff_vk_host_map_buffer(&ctx->s, &vp->slices_buf, buffer_ref->data,
-                                  buffer_ref,
+                                  VK_WHOLE_SIZE, buffer_ref,
                                   VK_BUFFER_USAGE_STORAGE_BUFFER_BIT |
                                   VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT));
 
@@ -108,10 +108,6 @@ static int vk_prores_start_frame(AVCodecContext          *avctx,
                                 NULL, pp->mb_params_off + pp->mb_params_sz,
                                 VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT |
                                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT));
-
-    /* Prepare frame to be used */
-    RET(ff_vk_decode_prepare_frame_sdr(dec, pr->frame, vp, 1,
-                                       FF_VK_REP_NATIVE, 0));
 
     pp->slice_num = 0;
     pp->bitstream_start = pp->bitstream_size = 0;
@@ -128,8 +124,8 @@ static int vk_prores_decode_slice(AVCodecContext *avctx,
     ProresVulkanDecodePicture *pp = pr->hwaccel_picture_private;
     FFVulkanDecodePicture     *vp = &pp->vp;
 
-    FFVkBuffer *slice_offset = (FFVkBuffer *)pp->metadata_buf->data;
-    FFVkBuffer *slices_buf   = vp->slices_buf ? (FFVkBuffer *)vp->slices_buf->data : NULL;
+    FFVkBuffer *slice_offset = pp->metadata_buf;
+    FFVkBuffer *slices_buf   = vp->slices_buf;
 
     /* Skip picture header */
     if (slices_buf && slices_buf->host_ref && !pp->slice_num)
@@ -178,8 +174,8 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
     if (!pix_desc)
         return AVERROR(EINVAL);
 
-    slice_data = (FFVkBuffer *)vp->slices_buf->data;
-    metadata   = (FFVkBuffer *)pp->metadata_buf->data;
+    slice_data = vp->slices_buf;
+    metadata   = pp->metadata_buf;
 
     pd = (ProresVkParameters) {
         .slice_data       = slice_data->address,
@@ -211,13 +207,13 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
                                  VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT,
                                  VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT));
 
-    RET(ff_vk_exec_mirror_sem_value(&ctx->s, exec, &vp->sem, &vp->sem_value, f));
+    /* Exec-owned output views: freed on exec recycle, so releasing a picture
+     * needs no blocking wait. No mirror_sem: nothing consumes vp->sem here. */
+    VkImageView views[AV_NUM_DATA_POINTERS];
+    RET(ff_vk_create_imageviews(&ctx->s, exec, views, f, FF_VK_REP_NATIVE));
 
-    /* Transfer ownership to the exec context */
-    RET(ff_vk_exec_add_dep_buf(&ctx->s, exec, &vp->slices_buf, 1, 0));
-    vp->slices_buf = NULL;
-    RET(ff_vk_exec_add_dep_buf(&ctx->s, exec, &pp->metadata_buf, 1, 0));
-    pp->metadata_buf = NULL;
+    ff_vk_exec_move_dep_refstruct(&ctx->s, exec, &vp->slices_buf);
+    ff_vk_exec_move_dep_refstruct(&ctx->s, exec, &pp->metadata_buf);
 
     vkf->layout[0] = VK_IMAGE_LAYOUT_UNDEFINED;
     vkf->access[0] = VK_ACCESS_2_NONE;
@@ -289,7 +285,7 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
                                     pp->mb_params_sz,
                                     VK_FORMAT_UNDEFINED);
     ff_vk_shader_update_img_array(&ctx->s, exec, &pv->vld,
-                                  f, vp->view.out,
+                                  f, views,
                                   0, 2,
                                   VK_IMAGE_LAYOUT_GENERAL,
                                   VK_NULL_HANDLE);
@@ -337,7 +333,7 @@ static int vk_prores_end_frame(AVCodecContext *avctx)
                                     pp->qmat_sz,
                                     VK_FORMAT_UNDEFINED);
     ff_vk_shader_update_img_array(&ctx->s, exec, &pv->idct,
-                                  f, vp->view.out,
+                                  f, views,
                                   0, 2,
                                   VK_IMAGE_LAYOUT_GENERAL,
                                   VK_NULL_HANDLE);
@@ -388,7 +384,7 @@ static int init_decode_shader(AVCodecContext *avctx, FFVulkanContext *s,
             .elems  = av_pix_fmt_count_planes(dec_frames_ctx->sw_format),
         },
     };
-    ff_vk_shader_add_descriptor_set(s, shd, desc_set, 3, 0, 0);
+    ff_vk_shader_add_descriptor_set(s, shd, desc_set, 3, 0);
 
     RET(ff_vk_shader_link(s, shd,
                           ff_prores_vld_comp_spv_data,
@@ -444,7 +440,7 @@ static int init_idct_shader(AVCodecContext *avctx, FFVulkanContext *s,
             .elems  = av_pix_fmt_count_planes(dec_frames_ctx->sw_format),
         },
     };
-    RET(ff_vk_shader_add_descriptor_set(s, shd, desc_set, 3, 0, 0));
+    ff_vk_shader_add_descriptor_set(s, shd, desc_set, 3, 0);
 
     RET(ff_vk_shader_link(s, shd,
                           ff_prores_idct_comp_spv_data,
@@ -463,7 +459,7 @@ static void vk_decode_prores_uninit(FFVulkanDecodeShared *ctx)
     ff_vk_shader_free(&ctx->s, &pv->vld);
     ff_vk_shader_free(&ctx->s, &pv->idct);
 
-    av_buffer_pool_uninit(&pv->metadata_pool);
+    av_refstruct_pool_uninit(&pv->metadata_pool);
 
     av_freep(&pv);
 }
@@ -508,7 +504,7 @@ static void vk_prores_free_frame_priv(AVRefStructOpaque _hwctx, void *data)
 
     ff_vk_decode_free_frame(dev_ctx, &pp->vp);
 
-    av_buffer_unref(&pp->metadata_buf);
+    av_refstruct_unref(&pp->metadata_buf);
 }
 
 const FFHWAccel ff_prores_vulkan_hwaccel = {

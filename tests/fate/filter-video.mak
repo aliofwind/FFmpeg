@@ -181,6 +181,9 @@ FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC FORMAT CONCAT SCALE, LAVFI_INDEV FILE
 fate-filter-lavd-scalenorm: tests/data/filtergraphs/scalenorm
 fate-filter-lavd-scalenorm: CMD = framecrc -f lavfi -graph_file $(TARGET_PATH)/tests/data/filtergraphs/scalenorm -i dummy
 
+FATE_FILTER-$(call FILTERFRAMECRC, COLOR FORMAT SCALE CROP) += fate-filter-scale-fast-bilinear-wide-edge
+fate-filter-scale-fast-bilinear-wide-edge: CMD = framecrc -flags bitexact -lavfi color=c=red:s=40000x1:r=1:d=1,format=yuv444p,scale=40032:1:flags=fast_bilinear,crop=1:1:40031:0 -frames:v 1
+
 FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 FEEDBACK HFLIP, LAVFI_INDEV) += fate-filter-feedback-hflip
 fate-filter-feedback-hflip: CMD = framecrc -f lavfi -i testsrc2=d=1 -vf "[in][hflipin]feedback=x=0:y=0:w=100:h=100[out][hflipout];[hflipout]hflip[hflipin]"
 
@@ -319,6 +322,14 @@ fate-filter-overlays: $(FATE_FILTER_OVERLAY) $(FATE_FILTER_OVERLAY_ALPHA)
 
 FATE_FILTER_VSYNTH_PGMYUV-$(CONFIG_PHASE_FILTER) += fate-filter-phase
 fate-filter-phase: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf phase
+
+FATE_FILTER-$(call FILTERFRAMECRC, COLOR CONCAT FORMAT PHOTOSENSITIVITY) += fate-filter-photosensitivity-blend
+fate-filter-photosensitivity-blend: CMD = framecrc -lavfi "color=black:s=16x16:r=1:d=1[black];color=white:s=16x16:r=1:d=2[white];[black][white]concat=n=2:v=1:a=0,format=rgb24,photosensitivity=frames=2:threshold=95:blend=0.5" -pix_fmt rgb24
+
+PHOTOSENSITIVITY_METADATA_DEPS = FFPROBE LAVFI_INDEV COLOR_FILTER CONCAT_FILTER FORMAT_FILTER \
+                                 PHOTOSENSITIVITY_FILTER WRAPPED_AVFRAME_DECODER
+FATE_FILTER_FFPROBE-$(call ALLYES, $(PHOTOSENSITIVITY_METADATA_DEPS)) += fate-filter-metadata-photosensitivity-blend0
+fate-filter-metadata-photosensitivity-blend0: CMD = run $(FILTER_METADATA_COMMAND) "color=black:s=16x16:r=1:d=1[black];color=white:s=16x16:r=1:d=1[white];[black][white]concat=n=2:v=1:a=0,format=rgb24,photosensitivity=frames=2:threshold=95:blend=0"
 
 FATE_REMOVEGRAIN := 00 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15 \
                     16 17 18 19 20 21 22 23 24
@@ -467,6 +478,12 @@ fate-filter-mpdecimate-maxdrop-pos: CMD = framecrc -lavfi testsrc2=r=1:d=5,fps=1
 FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 FPS MPDECIMATE) += fate-filter-mpdecimate-maxdrop-neg
 fate-filter-mpdecimate-maxdrop-neg: CMD = framecrc -lavfi testsrc2=r=1:d=5,fps=10,mpdecimate=max=-3 -pix_fmt yuv420p
 
+FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 FPS MPDECIMATE) += fate-filter-mpdecimate-mode-1
+fate-filter-mpdecimate-mode-1: CMD = framecrc -lavfi testsrc2=r=4:d=5,fps=5,mpdecimate=mode=1 -pix_fmt yuv420p
+
+FATE_FILTER-$(call FILTERFRAMECRC, TESTSRC2 FPS MPDECIMATE) += fate-filter-mpdecimate-mode-1-min-3
+fate-filter-mpdecimate-mode-1-min-3: CMD = framecrc -lavfi testsrc2=r=2:d=7,fps=7,mpdecimate=mode=1:min=3 -pix_fmt yuv420p
+
 FATE_FILTER-$(call FILTERFRAMECRC, FPS TESTSRC2) += $(addprefix fate-filter-fps-, up up-round-down up-round-up down down-round-down down-round-up down-eof-pass start-drop start-fill)
 fate-filter-fps-up: CMD = framecrc -lavfi testsrc2=r=3:d=2,fps=7
 fate-filter-fps-up-round-down: CMD = framecrc -lavfi testsrc2=r=3:d=2,fps=7:round=down
@@ -549,6 +566,14 @@ fate-filter-colorbalance: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=
 fate-filter-colorbalance-gbrap: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=gbrap,colorbalance=gh=.2 -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 3
 fate-filter-colorbalance-rgba64: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgba64,colorbalance=rm=.2,scale -pix_fmt rgba64le -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 3
 fate-filter-colorbalance-gbrap-16: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=gbrap,colorbalance=bh=.2 -pix_fmt gbrap -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 3
+
+FATE_FILTER_VSYNTH_PGMYUV-$(call ALLYES, SCALE_FILTER FORMAT_FILTER LATTICEPAL_FILTER) += fate-filter-latticepal fate-filter-latticepal-bayer fate-filter-latticepal-maxcolors fate-filter-latticepal-refine fate-filter-latticepal-residual fate-filter-latticepal-batched
+fate-filter-latticepal: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=32:dither=floyd_steinberg -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
+fate-filter-latticepal-bayer: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=7:dither=bayer -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
+fate-filter-latticepal-maxcolors: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=32:max_colors=100:dither=none -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
+fate-filter-latticepal-refine: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=32:dither=none:refine=full -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
+fate-filter-latticepal-residual: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=32:dither=bayer:refine=residual -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
+fate-filter-latticepal-batched: CMD = framecrc -c:v pgmyuv -i $(SRC) -vf scale,format=rgb24,latticepal=density=32:dither=floyd_steinberg:refine=batched -flags +bitexact -sws_flags +accurate_rnd+bitexact -frames:v 5
 
 FATE_FILTER_VSYNTH_VIDEO_FILTER-$(CONFIG_COLORMATRIX_FILTER) += fate-filter-colormatrix1 fate-filter-colormatrix2
 fate-filter-colormatrix1: CMD = video_filter "colormatrix=bt601:smpte240m,colormatrix=smpte240m:fcc,colormatrix=fcc:bt601,colormatrix=bt601:fcc,colormatrix=fcc:smpte240m,colormatrix=smpte240m:bt709"
@@ -810,6 +835,10 @@ EBUR128_METADATA_DEPS = LAVFI_INDEV AMOVIE_FILTER FLAC_DEMUXER FLAC_DECODER ARES
 FATE_METADATA_FILTER-$(call ALLYES, $(EBUR128_METADATA_DEPS)) += fate-filter-metadata-ebur128
 fate-filter-metadata-ebur128: SRC = $(TARGET_SAMPLES)/filter/seq-3341-7_seq-3342-5-24bit.flac
 fate-filter-metadata-ebur128: CMD = run $(FILTER_METADATA_COMMAND) "amovie='$(SRC)',ebur128=metadata=1"
+
+EBUR128_HEIGHT_DEPS = FFPROBE LAVFI_INDEV AEVALSRC_FILTER EBUR128_FILTER
+FATE_FILTER_FFPROBE-$(call ALLYES, $(EBUR128_HEIGHT_DEPS)) += fate-filter-metadata-ebur128-height
+fate-filter-metadata-ebur128-height: CMD = run $(FILTER_METADATA_COMMAND) "aevalsrc=0.12589*sin(2*PI*997*t):channel_layout=TBL:sample_rate=48000:duration=0.4,ebur128=metadata=1"
 
 READVITC_METADATA_DEPS = LAVFI_INDEV MOVIE_FILTER \
                          AVI_DEMUXER FFVHUFF_DECODER READVITC_FILTER

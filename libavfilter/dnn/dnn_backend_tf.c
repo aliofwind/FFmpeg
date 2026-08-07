@@ -486,6 +486,7 @@ static void dnn_free_model_tf(DNNModel **model)
         return;
 
     tf_model = (TFModel *)(*model);
+    ff_dnn_wait_requests(tf_model->request_queue, tf_model->ctx->nireq);
     while (ff_safe_queue_size(tf_model->request_queue) != 0) {
         TFRequestItem *item = ff_safe_queue_pop_front(tf_model->request_queue);
         destroy_request_item(&item);
@@ -706,6 +707,7 @@ static void infer_completion_callback(void *args) {
     }
 
     for (uint32_t i = 0; i < task->nb_output; ++i) {
+        outputs[i].layout = DL_NHWC;
         outputs[i].dims[dnn_get_height_idx_by_layout(outputs[i].layout)] =
             TF_Dim(infer_request->output_tensors[i], 1);
         outputs[i].dims[dnn_get_width_idx_by_layout(outputs[i].layout)] =

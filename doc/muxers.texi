@@ -2654,6 +2654,12 @@ writing is completed. Default is disabled.
 @item protocol_opts @var{options_list}
 Set protocol options as a :-separated list of key=value parameters. Values
 containing the @code{:} special character must be escaped.
+
+@item update_filemtime @var{bool}
+If set to 1, set each output file's modification time to the
+@code{creation_time} metadata value plus the frame's PTS offset.
+If @code{creation_time} is missing or unparsable, a warning is
+logged and the option is ignored. Default value is 0.
 @end table
 
 @subsection Examples
@@ -3221,6 +3227,12 @@ Override the default PCR retransmission time in milliseconds. Default is
 @code{-1} which means that the PCR interval will be determined automatically:
 20 ms is used for CBR streams, the highest multiple of the frame duration which
 is less than 100 ms is used for VBR streams.
+
+@item mpegts_pcr_pid @var{integer}
+Set a separate PID for PCR packets. When set to a valid PID value, PCR is
+carried in adaptation-field-only packets on the specified PID, separate from
+the elementary stream PIDs. This is required for example by ARIB TR-B14.
+Default is @code{-1} which means PCR is placed on the elementary stream PIDs.
 
 @item pat_period @var{duration}
 Maximum time in seconds between PAT/PMT tables. Default is @code{0.1}.

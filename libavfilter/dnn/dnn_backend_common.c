@@ -102,6 +102,14 @@ int ff_dnn_async_module_cleanup(DNNAsyncExecModule *async_module)
     return 0;
 }
 
+void ff_dnn_wait_requests(SafeQueue *request_queue, int nireq)
+{
+    if (!request_queue)
+        return;
+
+    ff_safe_queue_wait_for_size(request_queue, nireq);
+}
+
 int ff_dnn_start_inference_async(void *ctx, DNNAsyncExecModule *async_module)
 {
     int ret;

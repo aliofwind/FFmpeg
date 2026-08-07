@@ -2124,7 +2124,7 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .id        = AV_CODEC_ID_PCM_DVD,
         .type      = AVMEDIA_TYPE_AUDIO,
         .name      = "pcm_dvd",
-        .long_name = NULL_IF_CONFIG_SMALL("PCM signed 20|24-bit big-endian"),
+        .long_name = NULL_IF_CONFIG_SMALL("PCM signed 16|20|24-bit big-endian for DVD-Video media"),
         .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSLESS,
     },
     {
@@ -2244,6 +2244,13 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .type      = AVMEDIA_TYPE_AUDIO,
         .name      = "pcm_sga",
         .long_name = NULL_IF_CONFIG_SMALL("PCM SGA"),
+        .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSLESS,
+    },
+    {
+        .id        = AV_CODEC_ID_PCM_DVDA,
+        .type      = AVMEDIA_TYPE_AUDIO,
+        .name      = "pcm_dvda",
+        .long_name = NULL_IF_CONFIG_SMALL("PCM signed 16|20|24-bit big-endian for DVD-Audio media"),
         .props     = AV_CODEC_PROP_INTRA_ONLY | AV_CODEC_PROP_LOSSLESS,
     },
 
@@ -3845,6 +3852,12 @@ static const AVCodecDescriptor codec_descriptors[] = {
         .type      = AVMEDIA_TYPE_DATA,
         .name      = "smpte_436m_anc",
         .long_name = NULL_IF_CONFIG_SMALL("MXF SMPTE-436M ANC"),
+    },
+    {
+        .id        = AV_CODEC_ID_ITUT_T35,
+        .type      = AVMEDIA_TYPE_DATA,
+        .name      = "itut_t35",
+        .long_name = NULL_IF_CONFIG_SMALL("ITU-T T.35 metadata"),
     },
     {
         .id        = AV_CODEC_ID_MPEG2TS,

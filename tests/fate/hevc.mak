@@ -207,7 +207,7 @@ $(HEVC_TESTS_444_8BIT): SCALE_OPTS := -pix_fmt yuv444p
 $(HEVC_TESTS_10BIT): SCALE_OPTS := -pix_fmt yuv420p10le -vf scale
 $(HEVC_TESTS_422_10BIT) $(HEVC_TESTS_422_10BIN): SCALE_OPTS := -pix_fmt yuv422p10le -vf scale
 $(HEVC_TESTS_444_12BIT): SCALE_OPTS := -pix_fmt yuv444p12le -vf scale
-fate-hevc-conformance-%: CMD = framecrc -flags output_corrupt -i $(TARGET_SAMPLES)/hevc-conformance/$(subst fate-hevc-conformance-,,$(@)).bit $(SCALE_OPTS)
+fate-hevc-conformance-%: CMD = framecrc -i $(TARGET_SAMPLES)/hevc-conformance/$(subst fate-hevc-conformance-,,$(@)).bit $(SCALE_OPTS)
 $(HEVC_TESTS_422_10BIN): CMD = framecrc -i $(TARGET_SAMPLES)/hevc-conformance/$(subst fate-hevc-conformance-,,$(@)).bin $(SCALE_OPTS)
 $(HEVC_TESTS_MULTIVIEW): CMD = framecrc -i $(TARGET_SAMPLES)/hevc-conformance/$(subst fate-hevc-conformance-,,$(@)).bit \
 	-pix_fmt yuv420p -map "0:view:0" -map "0:view:1" -vf setpts=N:strip_fps=1
@@ -235,7 +235,7 @@ fate-hevc-bsf-mp4toannexb: CMD = md5 -i $(TARGET_PATH)/tests/data/hevc-mp4.mov -
 fate-hevc-bsf-mp4toannexb: CMP = oneline
 fate-hevc-bsf-mp4toannexb: REF = 73019329ed7f81c24f9af67c34c640c0
 
-FATE_HEVC-$(call DEMMUX, HEVC MOV, MOV HEVC, HEVC_PARSER HEVC_MP4TOANNEXB_BSF EXTRACT_EXTRADATA_BSF HEVC_METADATA_BSF) += fate-hevc-bsf-mp4toannexb-new-extradata
+FATE_HEVC-$(call DEMMUX, HEVC MOV, MOV HEVC, HEVC_PARSER HEVC_MP4TOANNEXB_BSF EXTRACT_EXTRADATA_BSF HEVC_METADATA_BSF SCALE_FILTER) += fate-hevc-bsf-mp4toannexb-new-extradata
 fate-hevc-bsf-mp4toannexb-new-extradata: CMD = stream_remux mov $(TARGET_SAMPLES)/hevc/extradata-reload-multi-stsd.mov "" hevc "-bsf:v hevc_mp4toannexb,hevc_metadata -map 0:v"
 
 # Start with IDR, POC < 0 after the second IDR

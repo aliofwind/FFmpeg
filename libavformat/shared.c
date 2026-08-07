@@ -59,6 +59,14 @@
  */
 #define HASH_METHOD    "SHA512/256"
 #define HASH_SIZE      32
+#define HEADER_MAGIC   MKTAG(u'\xFF', 'S', 'h', '$')
+#define HEADER_VERSION 3
+
+/**
+ * Hard watershed of consecutive failed blocks before we give up on the cache
+ * file altogether and assume it's entirely lost to us.
+ **/
+#define MAX_CORRUPT_BLOCKS 10
 
 static int hash_uri(uint8_t hash[HASH_SIZE], const char *uri)
 {
@@ -67,8 +75,10 @@ static int hash_uri(uint8_t hash[HASH_SIZE], const char *uri)
     if (ret < 0)
         return ret;
 
+    const int16_t version = HEADER_VERSION;
     av_assert0(av_hash_get_size(ctx) == HASH_SIZE);
     av_hash_init(ctx);
+    av_hash_update(ctx, (const uint8_t *) &version, sizeof(version));
     av_hash_update(ctx, (const uint8_t *) uri, strlen(uri));
     av_hash_final(ctx, hash);
     av_hash_freep(&ctx);
@@ -77,9 +87,6 @@ static int hash_uri(uint8_t hash[HASH_SIZE], const char *uri)
         hash[i] = hash[i] ? hash[i] : ~hash[i]; /* prevent zero bytes */
     return 0;
 }
-
-#define HEADER_MAGIC   MKTAG(u'\xFF', 'S', 'h', '$')
-#define HEADER_VERSION 2
 
 enum BlockState {
     /* Reserved block state values */
@@ -93,9 +100,9 @@ enum BlockState {
      */
 };
 
-static uint16_t get_block_crc(const uint8_t *block, size_t block_size)
+static uint32_t get_block_crc(const uint8_t *block, size_t block_size)
 {
-    uint16_t crc = av_crc(av_crc_get_table(AV_CRC_16_ANSI), 0, block, block_size);
+    uint32_t crc = av_crc(av_crc_get_table(AV_CRC_32_IEEE), 0, block, block_size);
     switch (crc) {
     case BLOCK_NONE:
     case BLOCK_FAILED:
@@ -107,7 +114,7 @@ static uint16_t get_block_crc(const uint8_t *block, size_t block_size)
 }
 
 typedef struct Block {
-    atomic_ushort state; /* enum BlockState */
+    atomic_uint state; /* enum BlockState */
 } Block;
 
 typedef struct Spacemap {
@@ -152,6 +159,7 @@ typedef struct SharedContext {
     int read_only;
     int64_t timeout;
     int retry_errors;
+    int retry_corrupt;
     int verify;
 
     /* misc state */
@@ -159,6 +167,7 @@ typedef struct SharedContext {
     uint8_t *tmp_buf;
     int block_size;
     int write_err; ///< write error occurred
+    int num_corrupt;
 
     /* cache file */
     uint8_t *cache_data; ///< optional mmap of the cache file
@@ -538,7 +547,7 @@ static int read_cache(SharedContext *s, uint8_t *buf, size_t size, off_t offset)
     while (size) {
         ssize_t ret = pread(s->fd, buf, size, offset);
         if (ret <= 0)
-            return ret ? AVERROR(errno) : AVERROR(EIO);
+            return ret ? AVERROR(errno) : AVERROR_EOF;
         buf    += ret;
         offset += ret;
         size   -= ret;
@@ -601,13 +610,16 @@ static int shared_read(URLContext *h, unsigned char *buf, int size)
         return ret;
 
     Block *const block = &s->spacemap->blocks[block_id];
-    unsigned short state = atomic_load_explicit(&block->state, memory_order_acquire);
+    unsigned state = atomic_load_explicit(&block->state, memory_order_acquire);
     int64_t pending_since = 0;
     int verify_read = 0, is_race = 0;
 
 retry:
     switch (state) {
     default:
+        if (s->num_corrupt >= MAX_CORRUPT_BLOCKS)
+            goto read_block; /* assume broken cache file */
+
         /* We always need to read the entire block to verify integrity */
         block_size = clamp_size(h, block_size, block_pos); /* filesize may have changed */
         if (s->cache_data) {
@@ -618,17 +630,29 @@ retry:
             ret = read_cache(s, tmp, block_size, block_pos);
             if (ret < 0) {
                 av_log(h, AV_LOG_ERROR, "Failed to read from cache file: %s\n", av_err2str(ret));
+                if (ret == AVERROR_EOF) { /* e.g. cache appears truncated? */
+                    if (s->retry_corrupt) {
+                        s->num_corrupt++;
+                        goto read_block;
+                    }
+                    ret = AVERROR(EIO); /* don't propagate EOF to caller */
+                }
                 return ret;
             }
         }
 
-        uint16_t crc = get_block_crc(tmp, block_size);
+        uint32_t crc = get_block_crc(tmp, block_size);
         if (crc != state) {
             av_log(h, AV_LOG_ERROR, "Cache corruption detected for block 0x%"PRIx64" at "
-                   "offset 0x%"PRIx64": expected CRC: 0x%04X, got: 0x%04X\n",
+                   "offset 0x%"PRIx64": expected CRC: 0x%08X, got: 0x%08X\n",
                    block_id, block_pos, state, crc);
+            if (s->retry_corrupt) {
+                s->num_corrupt++;
+                goto read_block;
+            }
             return AVERROR(EIO);
-        }
+        } else
+            s->num_corrupt = 0; /* reset corrupt block count on success */
 
         tmp += (ptrdiff_t) offset;
         size = FFMIN(size, block_size - offset);
@@ -643,16 +667,25 @@ retry:
         return size;
 
     case BLOCK_FAILED:
-        if (!s->retry_errors)
-            return AVERROR(EIO);
+        if (s->retry_errors)
+            goto read_block;
+        return AVERROR(EIO);
+
+read_block:
+        if (s->num_corrupt == MAX_CORRUPT_BLOCKS) {
+            av_log(h, AV_LOG_ERROR, "Too many consecutive corrupt blocks; "
+                   "assuming cache file is completely broken.\n");
+            s->num_corrupt++; /* silence this log on subsequent reads */
+        }
         av_fallthrough;
+
     case BLOCK_NONE:
         if (s->read_only)
             break; /* don't mark block as pending */
-        if (atomic_compare_exchange_weak_explicit(&block->state, &state,
-                                                  BLOCK_PENDING,
-                                                  memory_order_acquire,
-                                                  memory_order_acquire))
+        if (atomic_compare_exchange_strong_explicit(&block->state, &state,
+                                                    BLOCK_PENDING,
+                                                    memory_order_acquire,
+                                                    memory_order_acquire))
         {
             /* Acquired pending state, proceed to fetch the block */
             state = BLOCK_PENDING;
@@ -786,9 +819,9 @@ retry:
                                                     memory_order_relaxed,
                                                     memory_order_relaxed);
         } else {
-            uint16_t crc = get_block_crc(tmp, bytes_read);
+            uint32_t crc = get_block_crc(tmp, bytes_read);
             av_log(h, AV_LOG_TRACE, "Cached %d bytes to block 0x%"PRIx64" at "
-                   "offset 0x%"PRIx64", CRC 0x%04X\n", bytes_read, block_id,
+                   "offset 0x%"PRIx64", CRC 0x%08X\n", bytes_read, block_id,
                    block_pos, crc);
             atomic_store_explicit(&block->state, crc, memory_order_release);
         }
@@ -874,6 +907,7 @@ static const AVOption options[] = {
     { "cache_verify",   "Verify correctness of the cache against the source",   OFFSET(verify),     AV_OPT_TYPE_BOOL, {.i64 = 0}, 0, 1, .flags = D },
     { "cache_timeout",  "Time in us to wait before re-fetching pending blocks", OFFSET(timeout),    AV_OPT_TYPE_INT64, {.i64 = 10000}, 0, INT64_MAX, .flags = D },
     { "retry_errors",   "Re-request blocks even if they previously failed", OFFSET(retry_errors),   AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, .flags = D },
+    { "retry_corrupt",  "Re-request blocks that fail the CRC check",        OFFSET(retry_corrupt),  AV_OPT_TYPE_BOOL, {.i64 = 1}, 0, 1, .flags = D },
     {0},
 };
 

@@ -34,8 +34,10 @@ OBJS = ac3_parser.o                                                     \
        avdct.o                                                          \
        packet.o                                                         \
        bitstream.o                                                      \
+       bitstreamfilter.o                                                \
        bitstream_filters.o                                              \
        bsf.o                                                            \
+       bsfgraph.o                                                       \
        codec_desc.o                                                     \
        codec_par.o                                                      \
        d3d11va.o                                                        \
@@ -252,6 +254,7 @@ OBJS-$(CONFIG_APTX_HD_ENCODER)         += aptxenc.o aptx.o
 OBJS-$(CONFIG_APNG_DECODER)            += png.o pngdec.o pngdsp.o
 OBJS-$(CONFIG_APNG_ENCODER)            += png.o pngenc.o
 OBJS-$(CONFIG_APV_DECODER)             += apv_decode.o apv_entropy.o apv_dsp.o
+OBJS-$(CONFIG_APV_VULKAN_ENCODER)      += apv_encode_vulkan.o
 OBJS-$(CONFIG_ARBC_DECODER)            += arbc.o
 OBJS-$(CONFIG_ARGO_DECODER)            += argo.o
 OBJS-$(CONFIG_SSA_DECODER)             += assdec.o ass.o
@@ -893,6 +896,7 @@ OBJS-$(CONFIG_PCM_BLURAY_ENCODER)         += pcm-blurayenc.o
 OBJS-$(CONFIG_PCM_BLURAY_DECODER)         += pcm-bluray.o
 OBJS-$(CONFIG_PCM_DVD_DECODER)            += pcm-dvd.o
 OBJS-$(CONFIG_PCM_DVD_ENCODER)            += pcm-dvdenc.o
+OBJS-$(CONFIG_PCM_DVDA_DECODER)           += pcm-dvda.o
 OBJS-$(CONFIG_PCM_F16LE_DECODER)          += pcm.o
 OBJS-$(CONFIG_PCM_F24LE_DECODER)          += pcm.o
 OBJS-$(CONFIG_PCM_F32BE_DECODER)          += pcm.o
@@ -1047,6 +1051,7 @@ OBJS-$(CONFIG_AV1_D3D11VA_HWACCEL)        += dxva2_av1.o
 OBJS-$(CONFIG_AV1_DXVA2_HWACCEL)          += dxva2_av1.o
 OBJS-$(CONFIG_AV1_D3D12VA_HWACCEL)        += dxva2_av1.o d3d12va_av1.o
 OBJS-$(CONFIG_AV1_NVDEC_HWACCEL)          += nvdec_av1.o
+OBJS-$(CONFIG_AV1_NVDEC_CUARRAY_HWACCEL)  += nvdec_av1.o
 OBJS-$(CONFIG_AV1_VAAPI_HWACCEL)          += vaapi_av1.o
 OBJS-$(CONFIG_AV1_VDPAU_HWACCEL)          += vdpau_av1.o
 OBJS-$(CONFIG_AV1_VIDEOTOOLBOX_HWACCEL)   += videotoolbox_av1.o
@@ -1059,6 +1064,7 @@ OBJS-$(CONFIG_H264_D3D11VA_HWACCEL)       += dxva2_h264.o
 OBJS-$(CONFIG_H264_DXVA2_HWACCEL)         += dxva2_h264.o
 OBJS-$(CONFIG_H264_D3D12VA_HWACCEL)       += dxva2_h264.o d3d12va_h264.o
 OBJS-$(CONFIG_H264_NVDEC_HWACCEL)         += nvdec_h264.o
+OBJS-$(CONFIG_H264_NVDEC_CUARRAY_HWACCEL) += nvdec_h264.o
 OBJS-$(CONFIG_H264_QSV_HWACCEL)           += qsvdec.o
 OBJS-$(CONFIG_H264_VAAPI_HWACCEL)         += vaapi_h264.o
 OBJS-$(CONFIG_H264_VDPAU_HWACCEL)         += vdpau_h264.o
@@ -1068,6 +1074,7 @@ OBJS-$(CONFIG_HEVC_D3D11VA_HWACCEL)       += dxva2_hevc.o
 OBJS-$(CONFIG_HEVC_DXVA2_HWACCEL)         += dxva2_hevc.o
 OBJS-$(CONFIG_HEVC_D3D12VA_HWACCEL)       += dxva2_hevc.o d3d12va_hevc.o
 OBJS-$(CONFIG_HEVC_NVDEC_HWACCEL)         += nvdec_hevc.o
+OBJS-$(CONFIG_HEVC_NVDEC_CUARRAY_HWACCEL) += nvdec_hevc.o
 OBJS-$(CONFIG_HEVC_QSV_HWACCEL)           += qsvdec.o
 OBJS-$(CONFIG_HEVC_VAAPI_HWACCEL)         += vaapi_hevc.o h265_profile_level.o
 OBJS-$(CONFIG_HEVC_VDPAU_HWACCEL)         += vdpau_hevc.o h265_profile_level.o
@@ -1075,17 +1082,20 @@ OBJS-$(CONFIG_HEVC_VULKAN_HWACCEL)        += vulkan_decode.o vulkan_hevc.o
 OBJS-$(CONFIG_MJPEG_NVDEC_HWACCEL)        += nvdec_mjpeg.o
 OBJS-$(CONFIG_MJPEG_VAAPI_HWACCEL)        += vaapi_mjpeg.o
 OBJS-$(CONFIG_MPEG1_NVDEC_HWACCEL)        += nvdec_mpeg12.o
+OBJS-$(CONFIG_MPEG1_NVDEC_CUARRAY_HWACCEL) += nvdec_mpeg12.o
 OBJS-$(CONFIG_MPEG1_VDPAU_HWACCEL)        += vdpau_mpeg12.o
 OBJS-$(CONFIG_MPEG1_VIDEOTOOLBOX_HWACCEL) += videotoolbox.o
 OBJS-$(CONFIG_MPEG2_D3D11VA_HWACCEL)      += dxva2_mpeg2.o
 OBJS-$(CONFIG_MPEG2_DXVA2_HWACCEL)        += dxva2_mpeg2.o
 OBJS-$(CONFIG_MPEG2_D3D12VA_HWACCEL)      += dxva2_mpeg2.o d3d12va_mpeg2.o
 OBJS-$(CONFIG_MPEG2_NVDEC_HWACCEL)        += nvdec_mpeg12.o
+OBJS-$(CONFIG_MPEG2_NVDEC_CUARRAY_HWACCEL) += nvdec_mpeg12.o
 OBJS-$(CONFIG_MPEG2_QSV_HWACCEL)          += qsvdec.o
 OBJS-$(CONFIG_MPEG2_VAAPI_HWACCEL)        += vaapi_mpeg2.o
 OBJS-$(CONFIG_MPEG2_VDPAU_HWACCEL)        += vdpau_mpeg12.o
 OBJS-$(CONFIG_MPEG2_VIDEOTOOLBOX_HWACCEL) += videotoolbox.o
 OBJS-$(CONFIG_MPEG4_NVDEC_HWACCEL)        += nvdec_mpeg4.o
+OBJS-$(CONFIG_MPEG4_NVDEC_CUARRAY_HWACCEL) += nvdec_mpeg4.o
 OBJS-$(CONFIG_MPEG4_VAAPI_HWACCEL)        += vaapi_mpeg4.o
 OBJS-$(CONFIG_MPEG4_VDPAU_HWACCEL)        += vdpau_mpeg4.o
 OBJS-$(CONFIG_MPEG4_VIDEOTOOLBOX_HWACCEL) += videotoolbox.o
@@ -1093,15 +1103,18 @@ OBJS-$(CONFIG_VC1_D3D11VA_HWACCEL)        += dxva2_vc1.o
 OBJS-$(CONFIG_VC1_DXVA2_HWACCEL)          += dxva2_vc1.o
 OBJS-$(CONFIG_VC1_D3D12VA_HWACCEL)        += dxva2_vc1.o d3d12va_vc1.o
 OBJS-$(CONFIG_VC1_NVDEC_HWACCEL)          += nvdec_vc1.o
+OBJS-$(CONFIG_VC1_NVDEC_CUARRAY_HWACCEL)  += nvdec_vc1.o
 OBJS-$(CONFIG_VC1_QSV_HWACCEL)            += qsvdec.o
 OBJS-$(CONFIG_VC1_VAAPI_HWACCEL)          += vaapi_vc1.o
 OBJS-$(CONFIG_VC1_VDPAU_HWACCEL)          += vdpau_vc1.o
 OBJS-$(CONFIG_VP8_NVDEC_HWACCEL)          += nvdec_vp8.o
+OBJS-$(CONFIG_VP8_NVDEC_CUARRAY_HWACCEL)  += nvdec_vp8.o
 OBJS-$(CONFIG_VP8_VAAPI_HWACCEL)          += vaapi_vp8.o
 OBJS-$(CONFIG_VP9_D3D11VA_HWACCEL)        += dxva2_vp9.o
 OBJS-$(CONFIG_VP9_DXVA2_HWACCEL)          += dxva2_vp9.o
 OBJS-$(CONFIG_VP9_D3D12VA_HWACCEL)        += dxva2_vp9.o d3d12va_vp9.o
 OBJS-$(CONFIG_VP9_NVDEC_HWACCEL)          += nvdec_vp9.o
+OBJS-$(CONFIG_VP9_NVDEC_CUARRAY_HWACCEL)  += nvdec_vp9.o
 OBJS-$(CONFIG_VP9_VAAPI_HWACCEL)          += vaapi_vp9.o
 OBJS-$(CONFIG_VP9_VDPAU_HWACCEL)          += vdpau_vp9.o
 OBJS-$(CONFIG_VP9_VIDEOTOOLBOX_HWACCEL)   += videotoolbox_vp9.o

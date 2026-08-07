@@ -19,6 +19,8 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
+#include "config_components.h"
+
 #include <math.h>
 #include "libavutil/avassert.h"
 #include "libavutil/avstring.h"
@@ -187,6 +189,9 @@ void avformat_free_context(AVFormatContext *s)
     av_freep(&s->chapters);
     av_dict_free(&s->metadata);
     av_dict_free(&si->id3v2_meta);
+#if CONFIG_LIBCURL_PROTOCOL
+    ff_curl_loop_free(&si->curl_loop);
+#endif
     av_packet_free(&si->pkt);
     av_packet_free(&si->parse_pkt);
     ff_packet_list_free(&si->packet_buffer);
@@ -682,14 +687,13 @@ static int match_stream_specifier(const AVFormatContext *s, const AVStream *st,
             return match && (stream_id == st->id);
         } else if (*spec == 'm' && *(spec + 1) == ':') {
             const AVDictionaryEntry *tag;
-            char *key, *val;
             int ret;
 
             if (match) {
                 spec += 2;
-                val = strchr(spec, ':');
+                const char *val = strchr(spec, ':');
 
-                key = val ? av_strndup(spec, val - spec) : av_strdup(spec);
+                char *key = val ? av_strndup(spec, val - spec) : av_strdup(spec);
                 if (!key)
                     return AVERROR(ENOMEM);
 
@@ -897,6 +901,11 @@ int ff_copy_whiteblacklists(AVFormatContext *dst, const AVFormatContext *src)
             *(char **)((char*)dst + offsets[i]) = dst_str;
         }
     }
+    if (src->recursion_limit <= 0) {
+        av_log(dst, AV_LOG_ERROR, "Too deep recursion\n");
+        return AVERROR_INVALIDDATA;
+    }
+    dst->recursion_limit = src->recursion_limit - 1;
     return 0;
 }
 

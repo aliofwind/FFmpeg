@@ -31,6 +31,7 @@
 #include "libavutil/crc.h"
 #include "libavutil/intreadwrite.h"
 #include "libavutil/macros.h"
+#include "libavutil/mem.h"
 #include "libavutil/mem_internal.h"
 
 
@@ -43,7 +44,7 @@ static void check_crc(const AVCRC *table_new, const char *name, unsigned idx)
     if (!table_ref)
         return;
 
-    DECLARE_ALIGNED(4, uint8_t, buf)[8192];
+    DECLARE_ALIGNED(4, uint8_t, buf)[16384];
     static size_t offsets[AV_CRC_MAX + 1];
     static size_t sizes[AV_CRC_MAX + 1];
     static unsigned sizes_initialized = 0;
