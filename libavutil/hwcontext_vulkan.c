@@ -782,7 +782,7 @@ const char **av_vk_get_optional_instance_extensions(int *count)
     if (!exts)
         return NULL;
 
-    for (int i = 0; i < FF_ARRAY_ELEMS(optional_instance_exts) - 1; i++)
+    for (int i = 0; i < (int)FF_ARRAY_ELEMS(optional_instance_exts) - 1; i++)
         exts[i] = optional_instance_exts[i].name;
 
     *count = FF_ARRAY_ELEMS(optional_instance_exts) - 1;
@@ -2824,7 +2824,7 @@ static void try_export_flags(AVHWFramesContext *hwfc,
         .tiling = hwctx->tiling,
         .usage  = hwctx->usage,
         .flags  = (hwctx->tiling == VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT && has_mods) ?
-                  (hwctx->img_flags) : (VkImageCreateFlags)(VK_IMAGE_CREATE_ALIAS_BIT),
+                  (hwctx->img_flags) : hwctx->img_flags ? hwctx->img_flags : (VkImageCreateFlags)(VK_IMAGE_CREATE_ALIAS_BIT),
     };
 
     nb_mods = has_mods ? drm_mod_info->drmFormatModifierCount : 1;
