@@ -225,8 +225,6 @@ typedef struct FFVulkanShader {
     /* Creation info */
     VkPipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_info;
 
-    /* Base shader object */
-    VkShaderEXT object;
     VkPipeline pipeline;
 
     /* Pipeline layout */
@@ -329,6 +327,9 @@ typedef struct FFVulkanContext {
     VkPhysicalDeviceVulkan12Features feats_12;
 #ifdef VK_KHR_unified_image_layouts
     VkPhysicalDeviceUnifiedImageLayoutsFeaturesKHR unified_layout_feats;
+#endif
+#ifdef VK_KHR_maintenance11
+    VkPhysicalDeviceMaintenance11FeaturesKHR maintenance_11_feats;
 #endif
     VkPhysicalDeviceFeatures2 feats;
 
@@ -525,6 +526,9 @@ void ff_vk_exec_add_dep_obj(FFVulkanContext *s, FFVkExecContext *e,
 void ff_vk_exec_add_dep_wait_sem(FFVulkanContext *s, FFVkExecContext *e,
                                  VkSemaphore sem, uint64_t val,
                                  VkPipelineStageFlagBits2 stage);
+void ff_vk_exec_add_dep_signal_sem(FFVulkanContext *s, FFVkExecContext *e,
+                                   VkSemaphore sem, uint64_t val,
+                                   VkPipelineStageFlagBits2 stage);
 void ff_vk_exec_add_dep_bool_sem(FFVulkanContext *s, FFVkExecContext *e,
                                  VkSemaphore *sem, int nb,
                                  VkPipelineStageFlagBits2 stage,

@@ -34,7 +34,6 @@
 #include "libavutil/emms.h"
 #include "libavutil/imgutils.h"
 #include "libavutil/intreadwrite.h"
-#include "libavutil/libm.h"
 #include "libavutil/mathematics.h"
 #include "libavutil/mem.h"
 #include "libavutil/opt.h"
@@ -1232,6 +1231,9 @@ av_cold int ff_sws_init_single_context(SwsContext *sws, SwsFilter *srcFilter,
     SwsScaler scaler_sub = sws->scaler_sub ? sws->scaler_sub : sws->scaler;
     int lum_scaler = scaler_flag(sws->scaler, i == SWS_BICUBLIN ? SWS_BICUBIC  : i);
     int chr_scaler = scaler_flag(scaler_sub,  i == SWS_BICUBLIN ? SWS_BILINEAR : i);
+    const int info_scaler = sws->scaler == SWS_SCALE_AUTO &&
+                            i == SWS_BICUBLIN &&
+                            chr_scaler == SWS_BILINEAR ? i : lum_scaler;
 
     /* sanity check */
     if (srcW < 1 || srcH < 1 || dstW < 1 || dstH < 1) {
@@ -1241,6 +1243,12 @@ av_cold int ff_sws_init_single_context(SwsContext *sws, SwsFilter *srcFilter,
                srcW, srcH, dstW, dstH);
         return AVERROR(EINVAL);
     }
+
+    ret = av_image_check_size2(srcW, srcH, INT64_MAX, AV_PIX_FMT_NONE, 0, c);
+    if (ret >= 0)
+        ret = av_image_check_size2(dstW, dstH, INT64_MAX, AV_PIX_FMT_NONE, 0, c);
+    if (ret < 0)
+        return ret;
 
     if (!dstFilter)
         dstFilter = &dummyFilter;
@@ -1757,7 +1765,7 @@ av_cold int ff_sws_init_single_context(SwsContext *sws, SwsFilter *srcFilter,
         const char *scaler = NULL, *cpucaps;
 
         for (i = 0; i < FF_ARRAY_ELEMS(scale_algorithms); i++) {
-            if (flags & scale_algorithms[i].flag) {
+            if (info_scaler == scale_algorithms[i].flag) {
                 scaler = scale_algorithms[i].description;
                 break;
             }

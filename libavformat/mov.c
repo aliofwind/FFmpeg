@@ -5728,20 +5728,23 @@ static int mov_read_keys(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     avio_skip(pb, 4);
     count = avio_rb32(pb);
     atom.size -= 8;
-    if (count >= UINT_MAX / sizeof(*c->meta_keys)) {
+    if (count > atom.size / 8 || count >= UINT_MAX / sizeof(*c->meta_keys)) {
         av_log(c->fc, AV_LOG_ERROR,
                "The 'keys' atom with the invalid key count: %"PRIu32"\n", count);
         return AVERROR_INVALIDDATA;
     }
 
-    c->meta_keys_count = count + 1;
-    c->meta_keys = av_mallocz(c->meta_keys_count * sizeof(*c->meta_keys));
+    c->meta_keys = av_malloc_array(count + 1, sizeof(*c->meta_keys));
     if (!c->meta_keys)
         return AVERROR(ENOMEM);
 
+    c->meta_keys[0] = NULL;
+    c->meta_keys_count = 1;
     for (i = 1; i <= count; ++i) {
         uint32_t key_size = avio_rb32(pb);
         uint32_t type = avio_rl32(pb);
+        c->meta_keys[i] = NULL;
+        c->meta_keys_count = i + 1;
         if (key_size < 8 || key_size > atom.size) {
             av_log(c->fc, AV_LOG_ERROR,
                    "The key# %"PRIu32" in meta has invalid size:"
@@ -5754,10 +5757,13 @@ static int mov_read_keys(MOVContext *c, AVIOContext *pb, MOVAtom atom)
             avio_skip(pb, key_size);
             continue;
         }
-        c->meta_keys[i] = av_mallocz(key_size + 1);
+        c->meta_keys[i] = av_malloc(key_size + 1);
         if (!c->meta_keys[i])
             return AVERROR(ENOMEM);
-        avio_read(pb, c->meta_keys[i], key_size);
+        int ret = ffio_read_size(pb, c->meta_keys[i], key_size);
+        if (ret < 0)
+            return ret;
+        c->meta_keys[i][key_size] = 0;
     }
 
     return 0;
@@ -5819,8 +5825,8 @@ static int mov_read_custom(MOVContext *c, AVIOContext *pb, MOVAtom atom)
 
     if (mean && key && val) {
         if (strcmp(key, "iTunSMPB") == 0) {
-            int priming, remainder, samples;
-            if(sscanf(val, "%*X %X %X %X", &priming, &remainder, &samples) == 3){
+            int64_t priming, remainder, samples;
+            if (ff_itunes_parse_smpb(val, &priming, &remainder, &samples) >= 0) {
                 if(priming>0 && priming<16384)
                     st->codecpar->initial_padding = priming = av_rescale_q(priming, st->time_base,
                                                                            (AVRational){ 1, st->codecpar->sample_rate });
@@ -5836,7 +5842,8 @@ static int mov_read_custom(MOVContext *c, AVIOContext *pb, MOVAtom atom)
                         ffstream(st)->last_discard_sample = duration;
                     }
                 }
-                av_log(c->fc, AV_LOG_DEBUG, "Parsed iTunSMPB: priming %d, remainder %d samples %d\n",
+                av_log(c->fc, AV_LOG_DEBUG, "Parsed iTunSMPB: priming %"PRId64", "
+                       "remainder %"PRId64" samples %"PRId64"\n",
                        priming, remainder, samples);
             }
         }
@@ -6402,6 +6409,13 @@ static int mov_read_trun(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         if (flags & MOV_TRUN_SAMPLE_SIZE)     sample_size     = avio_rb32(pb);
         if (flags & MOV_TRUN_SAMPLE_FLAGS)    sample_flags    = avio_rb32(pb);
         if (flags & MOV_TRUN_SAMPLE_CTS)      ctts_duration   = avio_rb32(pb);
+
+        if (sample_duration > c->max_stts_delta) {
+            av_log(c->fc, AV_LOG_WARNING,
+                   "Too large sample duration %u in trun entry %u in st:%d. Clipping to 1.\n",
+                   sample_duration, i, st->index);
+            sample_duration = 1;
+        }
 
         mov_update_dts_shift(sc, ctts_duration, c->fc);
         if (pts != AV_NOPTS_VALUE) {
@@ -7565,7 +7579,12 @@ static int mov_read_eyes(MOVContext *c, AVIOContext *pb, MOVAtom atom)
     }
 
     sc->stereo3d->flags                           = flags;
-    sc->stereo3d->type                            = type;
+    /* eyes/stri only records packed vs single-eye, not SBS/TB. Keep a more
+     * specific type already set by st3d. */
+    if (type != AV_STEREO3D_UNSPEC)
+        sc->stereo3d->type = type;
+    else if (sc->stereo3d->type == AV_STEREO3D_2D)
+        sc->stereo3d->type = type;
     sc->stereo3d->view                            = view;
     sc->stereo3d->primary_eye                     = primary_eye;
     sc->stereo3d->baseline                        = baseline;
@@ -8500,12 +8519,12 @@ static int mov_read_tenc(MOVContext *c, AVIOContext *pb, MOVAtom atom)
         if (!sc->cenc.encryption_index)
             return AVERROR(ENOMEM);
     }
-    sc->cenc.per_sample_iv_size = avio_r8(pb);
-    if (sc->cenc.per_sample_iv_size != 0 && sc->cenc.per_sample_iv_size != 8 &&
-        sc->cenc.per_sample_iv_size != 16) {
+    iv_size = avio_r8(pb);
+    if (iv_size != 0 && iv_size != 8 && iv_size != 16) {
         av_log(c->fc, AV_LOG_ERROR, "invalid per-sample IV size value\n");
         return AVERROR_INVALIDDATA;
     }
+    sc->cenc.per_sample_iv_size = iv_size;
     if (avio_read(pb, sc->cenc.default_encrypted_sample->key_id, 16) != 16) {
         av_log(c->fc, AV_LOG_ERROR, "failed to read the default key ID\n");
         return AVERROR_INVALIDDATA;
@@ -9988,6 +10007,39 @@ fail:
     return ret;
 }
 
+static int mov_read_vmhd(MOVContext *c, AVIOContext *pb, MOVAtom atom)
+{
+    avio_rb32(pb); // version & flags
+    uint16_t graphics_mode = avio_rb16(pb);
+    // ignored: opcolor[3]
+
+    if (c->fc->nb_streams < 1)
+        return 0;
+    AVStream *st = c->fc->streams[c->fc->nb_streams - 1];
+    if (st->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)
+        return 0;
+
+    switch (graphics_mode) {
+    case MOV_GRAPHICS_MODE_COPY:
+    case MOV_GRAPHICS_MODE_DITHER_COPY:
+        st->codecpar->alpha_mode = AVALPHA_MODE_UNSPECIFIED;
+        break;
+    case MOV_GRAPHICS_MODE_STRAIGHT_ALPHA:
+        st->codecpar->alpha_mode = AVALPHA_MODE_STRAIGHT;
+        break;
+    case MOV_GRAPHICS_MODE_PREMUL_BLACK_ALPHA:
+        st->codecpar->alpha_mode = AVALPHA_MODE_PREMULTIPLIED;
+        break;
+    default:
+        st->codecpar->alpha_mode = AVALPHA_MODE_UNSPECIFIED;
+        av_log(c->fc, AV_LOG_WARNING, "Unhandled graphics mode: 0x%x\n",
+               graphics_mode);
+        break;
+    }
+
+    return 0;
+}
+
 static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('A','C','L','R'), mov_read_aclr },
 { MKTAG('A','P','R','G'), mov_read_avid },
@@ -10119,6 +10171,7 @@ static const MOVParseTableEntry mov_default_parse_table[] = {
 { MKTAG('i','a','c','b'), mov_read_iacb },
 #endif
 { MKTAG('s','r','a','t'), mov_read_srat },
+{ MKTAG('v','m','h','d'), mov_read_vmhd },
 { 0, NULL }
 };
 
@@ -11380,10 +11433,7 @@ static int mov_parse_cdsc_and_rndr_streams(AVFormatContext *s)
 
             st_ref = mov_find_reference_track(s, st, tag->id, tag->nb_id, 0);
             if (!st_ref) {
-                int loglevel = (s->error_recognition & AV_EF_EXPLODE) ? AV_LOG_ERROR : AV_LOG_WARNING;
-                av_log(s, loglevel, "Failed to find referenced stream\n");
-                if (s->error_recognition & AV_EF_EXPLODE)
-                    return AVERROR_INVALIDDATA;
+                av_log(s, AV_LOG_WARNING, "Failed to find referenced stream\n");
                 continue;
             }
 

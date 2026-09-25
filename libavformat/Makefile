@@ -147,6 +147,8 @@ OBJS-$(CONFIG_ASS_DEMUXER)               += assdec.o subtitles.o
 OBJS-$(CONFIG_ASS_MUXER)                 += assenc.o
 OBJS-$(CONFIG_AST_DEMUXER)               += ast.o astdec.o
 OBJS-$(CONFIG_AST_MUXER)                 += ast.o astenc.o
+OBJS-$(CONFIG_ASTC_MUXER)                += astcenc.o
+OBJS-$(CONFIG_ASTC_DEMUXER)              += astcdec.o
 OBJS-$(CONFIG_AU_DEMUXER)                += au.o pcm.o
 OBJS-$(CONFIG_AU_MUXER)                  += au.o rawenc.o
 OBJS-$(CONFIG_AVI_DEMUXER)               += avidec.o
@@ -347,6 +349,8 @@ OBJS-$(CONFIG_JACOSUB_DEMUXER)           += jacosubdec.o subtitles.o
 OBJS-$(CONFIG_JACOSUB_MUXER)             += jacosubenc.o rawenc.o
 OBJS-$(CONFIG_JPEGXL_ANIM_DEMUXER)       += jpegxl_anim_dec.o
 OBJS-$(CONFIG_JV_DEMUXER)                += jvdec.o
+OBJS-$(CONFIG_KTX_MUXER)                 += ktxenc.o
+OBJS-$(CONFIG_KTX_DEMUXER)               += ktxdec.o
 OBJS-$(CONFIG_KUX_DEMUXER)               += flvdec.o
 OBJS-$(CONFIG_KVAG_DEMUXER)              += kvag.o
 OBJS-$(CONFIG_KVAG_MUXER)                += kvag.o rawenc.o
@@ -777,7 +781,7 @@ SHLIBOBJS-$(HAVE_GNU_WINDRES)            += avformatres.o
 
 SKIPHEADERS-$(CONFIG_IMF_DEMUXER)        += imf.h
 SKIPHEADERS-$(CONFIG_FFRTMPCRYPT_PROTOCOL) += rtmpdh.h
-SKIPHEADERS-$(CONFIG_NETWORK)            += network.h rtsp.h
+SKIPHEADERS-$(CONFIG_NETWORK)            += ip.h network.h rtsp.h
 
 TESTPROGS = id3v2                                                       \
             mkdir                                                       \
@@ -790,6 +794,7 @@ TESTPROGS = id3v2                                                       \
 FIFO-MUXER-TESTPROGS-$(CONFIG_NETWORK)   += fifo_muxer
 TESTPROGS-$(CONFIG_FIFO_MUXER)           += $(FIFO-MUXER-TESTPROGS-yes)
 TESTPROGS-$(CONFIG_FFRTMPCRYPT_PROTOCOL) += rtmpdh
+TESTPROGS-$(CONFIG_HTTP_PROTOCOL)        += http
 TESTPROGS-$(CONFIG_NETWORK)              += noproxy
 TESTPROGS-$(CONFIG_SRTP)                 += srtp
 TESTPROGS-$(CONFIG_IMF_DEMUXER)          += imf
