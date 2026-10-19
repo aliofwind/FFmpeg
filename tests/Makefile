@@ -65,6 +65,14 @@ tests/data/streamgroups/%: TAG = COPY
 tests/data/streamgroups/%: $(SRC_PATH)/tests/streamgroups/% | tests/data/streamgroups
 	$(M)cp $< $@
 
+tests/data/fate/%.amr: TAG = GEN
+tests/data/fate/%.amr: tests/amrgen$(HOSTEXESUF) | tests/data/fate
+	$(M)./$< $@
+
+tests/data/fate/apng-small-bpp-%.png: TAG = GEN
+tests/data/fate/apng-small-bpp-%.png: tests/apnggen$(HOSTEXESUF) | tests/data/fate
+	$(M)./$< $@
+
 RUNNING_FATE := $(filter check fate%,$(filter-out fate-rsync,$(MAKECMDGOALS)))
 
 # Check sanity of dependencies when running FATE tests.
@@ -210,6 +218,7 @@ include $(SRC_PATH)/tests/fate/image.mak
 include $(SRC_PATH)/tests/fate/imf.mak
 include $(SRC_PATH)/tests/fate/indeo.mak
 include $(SRC_PATH)/tests/fate/jpeg2000.mak
+include $(SRC_PATH)/tests/fate/jpegapp.mak
 include $(SRC_PATH)/tests/fate/jxl.mak
 include $(SRC_PATH)/tests/fate/libavcodec.mak
 include $(SRC_PATH)/tests/fate/libavdevice.mak

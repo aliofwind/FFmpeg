@@ -86,6 +86,7 @@ typedef struct WAVMuxContext {
     int peak_block_size;
     int peak_format;
     int peak_block_pos;
+    int peak_channel;
     int peak_ppv;
     int peak_bps;
 } WAVMuxContext;
@@ -145,6 +146,30 @@ static void bwf_write_bext_chunk(AVFormatContext *s)
     ff_end_tag(s->pb, bext);
 }
 
+static av_cold int wav_init(AVFormatContext *s)
+{
+    WAVMuxContext *wav = s->priv_data;
+
+    if (s->streams[0]->codecpar->ch_layout.nb_channels <= 0) {
+        av_log(s, AV_LOG_ERROR, "Invalid number of channels\n");
+        return AVERROR(EINVAL);
+    }
+
+    if (wav->write_peak == PEAK_ONLY) {
+        if (wav->rf64 == RF64_ALWAYS) {
+            av_log(s, AV_LOG_ERROR, "write_peak=only is not compatible with RF64\n");
+            return AVERROR(EINVAL);
+        }
+        if (wav->rf64 == RF64_AUTO)
+            wav->rf64 = RF64_NEVER;
+    }
+
+    if (wav->rf64 == RF64_AUTO && !(s->pb->seekable & AVIO_SEEKABLE_NORMAL))
+        wav->rf64 = RF64_NEVER;
+
+    return 0;
+}
+
 static av_cold void wav_deinit(AVFormatContext *s)
 {
     WAVMuxContext *wav = s->priv_data;
@@ -175,7 +200,8 @@ static av_cold int peak_init_writer(AVFormatContext *s)
                "Writing 16 bit peak for 8 bit audio does not make sense\n");
         return AVERROR(EINVAL);
     }
-    if (par->ch_layout.nb_channels > INT_MAX / (wav->peak_bps * wav->peak_ppv))
+    if (par->ch_layout.nb_channels <= 0 ||
+        par->ch_layout.nb_channels > INT_MAX / (wav->peak_bps * wav->peak_ppv))
         return AVERROR(ERANGE);
     wav->size_increment = par->ch_layout.nb_channels * wav->peak_bps * wav->peak_ppv;
 
@@ -305,10 +331,6 @@ static int wav_write_header(AVFormatContext *s)
     AVIOContext *pb = s->pb;
     int64_t fmt;
 
-    if (wav->rf64 == RF64_AUTO && !(s->pb->seekable & AVIO_SEEKABLE_NORMAL)) {
-        wav->rf64 = RF64_NEVER;
-    }
-
     if (wav->rf64 == RF64_ALWAYS) {
         ffio_wfourcc(pb, "RF64");
         avio_wl32(pb, -1); /* RF64 chunk size: use size in ds64 */
@@ -388,7 +410,7 @@ static int wav_write_packet(AVFormatContext *s, AVPacket *pkt)
         avio_write(pb, pkt->data, pkt->size);
 
     if (wav->write_peak) {
-        int c = 0;
+        int c = wav->peak_channel;
         int i;
         for (i = 0; i < pkt->size; i += wav->peak_bps) {
             if (wav->peak_bps == 1) {
@@ -408,6 +430,7 @@ static int wav_write_packet(AVFormatContext *s, AVPacket *pkt)
                 }
             }
         }
+        wav->peak_channel = c;
     }
 
     if(pkt->pts != AV_NOPTS_VALUE) {
@@ -533,6 +556,7 @@ const FFOutputFormat ff_wav_muxer = {
     .p.audio_codec     = AV_CODEC_ID_PCM_S16LE,
     .p.video_codec     = AV_CODEC_ID_NONE,
     .p.subtitle_codec  = AV_CODEC_ID_NONE,
+    .init              = wav_init,
     .write_header      = wav_write_header,
     .write_packet      = wav_write_packet,
     .write_trailer     = wav_write_trailer,

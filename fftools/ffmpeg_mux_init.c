@@ -972,6 +972,7 @@ ost_bind_filter(const Muxer *mux, MuxStream *ms, OutputFilter *ofilter,
         .color_space      = enc_ctx->colorspace,
         .color_range      = enc_ctx->color_range,
         .alpha_mode       = enc_ctx->alpha_mode,
+        .chroma_location  = enc_ctx->chroma_sample_location,
         .vsync_method     = vsync_method,
         .frame_rate       = ms->frame_rate,
         .max_frame_rate   = ms->max_frame_rate,
@@ -1023,6 +1024,11 @@ ost_bind_filter(const Muxer *mux, MuxStream *ms, OutputFilter *ofilter,
         ret = avcodec_get_supported_config(enc_ctx, NULL,
                                            AV_CODEC_CONFIG_ALPHA_MODE, 0,
                                            (const void **) &opts.alpha_modes, NULL);
+        if (ret < 0)
+            return ret;
+        ret = avcodec_get_supported_config(enc_ctx, NULL,
+                                           AV_CODEC_CONFIG_CHROMA_LOCATION, 0,
+                                           (const void **) &opts.chroma_locations, NULL);
         if (ret < 0)
             return ret;
     } else {
@@ -1557,9 +1563,12 @@ static int ost_add(Muxer *mux, const OptionsContext *o, enum AVMediaType type,
     }
 
     opt_match_per_stream_dbl(ost, &o->qscale, oc, st, &qscale);
-    if (ost->enc && qscale >= 0) {
-        ost->enc->flags          |= AV_CODEC_FLAG_QSCALE;
-        ost->enc->global_quality  = FF_QP2LAMBDA * qscale;
+    if (ost->enc) {
+        if (qscale >= 0) {
+            ost->enc->flags          |= AV_CODEC_FLAG_QSCALE;
+            ost->enc->global_quality  = FF_QP2LAMBDA * qscale;
+        } else
+            ost->enc->global_quality  = ost->enc->enc_ctx->global_quality;
     }
 
     if (ms->sch_idx >= 0) {
@@ -1679,8 +1688,11 @@ static int map_auto_video(Muxer *mux, const OptionsContext *o)
             if (!istg->fg)
                 continue;
 
-            for (int j = 0; j < istg->stg->nb_streams; j++) {
-                AVStream *st = istg->stg->streams[j];
+            for (int j = 0; j < istg->stg->nb_entries; j++) {
+                if (istg->stg->entries[j]->type != AV_STREAM_GROUP_ENTRY_STREAM)
+                    continue;
+
+                AVStream *st = istg->stg->entries[j]->stream;
 
                 if (st->event_flags & AVSTREAM_EVENT_FLAG_NEW_PACKETS) {
                     score = 100000000;
@@ -2472,7 +2484,10 @@ static int of_serialize_options(Muxer *mux, void *obj, AVBPrint *bp)
     char *ptr;
     int ret;
 
-    ret = av_opt_serialize(obj, 0, AV_OPT_SERIALIZE_SKIP_DEFAULTS | AV_OPT_SERIALIZE_SEARCH_CHILDREN,
+    ret = av_opt_serialize(obj, AV_OPT_FLAG_DEPRECATED,
+                           AV_OPT_SERIALIZE_SKIP_DEFAULTS |
+                           AV_OPT_SERIALIZE_SEARCH_CHILDREN |
+                           AV_OPT_SERIALIZE_OPT_FLAGS_EXCLUDE,
                            &ptr, '=', ':');
     if (ret < 0) {
         av_log(mux, AV_LOG_ERROR, "Failed to serialize group\n");
@@ -2610,6 +2625,7 @@ static int of_map_group(Muxer *mux, AVDictionary **dict, AVBPrint *bp, const cha
     case AV_STREAM_GROUP_PARAMS_LCEVC:
     case AV_STREAM_GROUP_PARAMS_TREF:
     case AV_STREAM_GROUP_PARAMS_DOLBY_VISION:
+    case AV_STREAM_GROUP_PARAMS_GAIN_MAP:
         break;
     default:
         av_log(mux, AV_LOG_ERROR, "Unsupported mapped group type %d.\n", stg->type);
@@ -2637,6 +2653,8 @@ static int of_parse_group_token(Muxer *mux, const char *token, char *ptr)
                 { .i64 = AV_STREAM_GROUP_PARAMS_LCEVC }, .unit = "type" },
             { "tref", NULL, 0, AV_OPT_TYPE_CONST,
                 { .i64 = AV_STREAM_GROUP_PARAMS_TREF }, .unit = "type" },
+            { "gain_map", NULL, 0, AV_OPT_TYPE_CONST,
+                { .i64 = AV_STREAM_GROUP_PARAMS_GAIN_MAP }, .unit = "type" },
         { NULL },
     };
     const AVClass class = {
@@ -2724,8 +2742,8 @@ static int of_parse_group_token(Muxer *mux, const char *token, char *ptr)
             ret = AVERROR(EINVAL);
             goto end;
         }
-        for (unsigned i = 0; i < oc->stream_groups[idx]->nb_streams; i++) {
-            ret = avformat_stream_group_add_stream(stg, oc->stream_groups[idx]->streams[i]);
+        for (unsigned i = 0; i < oc->stream_groups[idx]->nb_entries; i++) {
+            ret = avformat_stream_group_add_stream(stg, oc->stream_groups[idx]->entries[i]->stream);
             if (ret < 0)
                 goto end;
         }

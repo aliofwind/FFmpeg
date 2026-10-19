@@ -315,7 +315,7 @@ static int get_output_tf(DNNModel *model, const char *input_name, int input_widt
     int ret;
     TFModel *tf_model = (TFModel *)model;
     DnnContext *ctx = tf_model->ctx;
-    TaskItem task;
+    TaskItem task = { 0 };
     TFRequestItem *request;
     DNNExecBaseParams exec_params = {
         .input_name     = input_name,
@@ -540,13 +540,6 @@ static DNNModel *dnn_load_model_tf(DnnContext *ctx, DNNFunctionType func_type, A
     if (ctx->nireq <= 0) {
         ctx->nireq = av_cpu_count() / 2 + 1;
     }
-
-#if !HAVE_PTHREAD_CANCEL
-    if (ctx->async) {
-        ctx->async = 0;
-        av_log(filter_ctx, AV_LOG_WARNING, "pthread is not supported, roll back to sync.\n");
-    }
-#endif
 
     tf_model->request_queue = ff_safe_queue_create();
     if (!tf_model->request_queue) {

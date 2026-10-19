@@ -112,6 +112,12 @@ fate-sub-webvtt2: CMD = fmtstdout ass -i $(TARGET_SAMPLES)/sub/WebVTT_extended_t
 FATE_SUBTITLES-$(call ALLYES, SRT_DEMUXER SUBRIP_DECODER WEBVTT_ENCODER WEBVTT_MUXER) += fate-sub-webvttenc
 fate-sub-webvttenc: CMD = fmtstdout webvtt -i $(TARGET_SAMPLES)/sub/SubRip_capability_tester.srt
 
+FATE_SUB_KARAOKE-$(call ALLYES, FILE_PROTOCOL PIPE_PROTOCOL ASS_DEMUXER ASS_DECODER WEBVTT_ENCODER WEBVTT_MUXER) += fate-sub-karaoke-webvttenc
+fate-sub-karaoke-webvttenc: CMD = fmtstdout webvtt -i $(SRC_PATH)/tests/sub-karaoke.ass
+
+FATE_SUB_KARAOKE-$(call ALLYES, FILE_PROTOCOL PIPE_PROTOCOL ASS_DEMUXER ASS_DECODER WEBVTT_ENCODER WEBVTT_MUXER) += fate-sub-karaoke-webvttenc-ss
+fate-sub-karaoke-webvttenc-ss: CMD = fmtstdout webvtt -i $(SRC_PATH)/tests/sub-karaoke.ass -ss 12
+
 FATE_SUBTITLES-$(call ALLYES, SRT_DEMUXER SUBRIP_DECODER TEXT_ENCODER SRT_MUXER) += fate-sub-textenc
 fate-sub-textenc: CMD = fmtstdout srt -i $(TARGET_SAMPLES)/sub/SubRip_capability_tester.srt -c:s text
 
@@ -157,6 +163,12 @@ fate-sub-dvb: CMD = framecrc -i $(TARGET_SAMPLES)/sub/dvbsubtest_filter.ts -map 
 FATE_SUBTITLES-$(call ALLYES, PIPE_PROTOCOL SRT_DEMUXER SUBRIP_DECODER TTML_ENCODER TTML_MUXER) += fate-sub-ttmlenc
 fate-sub-ttmlenc: CMD = fmtstdout ttml -i $(TARGET_SAMPLES)/sub/SubRip_capability_tester.srt
 
+# visible caption -> TIME-only statement -> CS-only statement; in bitmap mode
+# only the explicit clear screen (CS) must emit an empty (num_rects=0) event.
+FATE_SUBTITLES_PROBE-$(call DEMDEC, MPEGTS, LIBARIBCAPTION) += fate-sub-aribcaption-clear
+fate-sub-aribcaption-clear: CMD = probeframes -sub_type bitmap $(TARGET_SAMPLES)/sub/aribcaption_clear.ts
+fate-sub-aribcaption-clear: CMP = diff
+
 FATE_SUBTITLES-$(call ENCMUX, ASS, ASS) += $(FATE_SUBTITLES_ASS-yes)
 FATE_SUBTITLES += $(FATE_SUBTITLES-yes)
 FATE_SUBTITLES := $(if $(CONFIG_PIPE_PROTOCOL), $(FATE_SUBTITLES))
@@ -164,4 +176,6 @@ FATE_SUBTITLES := $(if $(CONFIG_PIPE_PROTOCOL), $(FATE_SUBTITLES))
 fate-sub-%: CMP = rawdiff
 
 FATE_SAMPLES_FFMPEG += $(FATE_SUBTITLES)
-fate-subtitles: $(FATE_SUBTITLES)
+FATE_SAMPLES_FFPROBE += $(FATE_SUBTITLES_PROBE-yes)
+fate-subtitles: $(FATE_SUBTITLES) $(FATE_SUB_KARAOKE-yes) $(FATE_SUBTITLES_PROBE-yes)
+FATE_FFMPEG-yes += $(FATE_SUB_KARAOKE-yes)

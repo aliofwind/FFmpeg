@@ -43,6 +43,7 @@
 #include "libavcodec/ac3_parser_internal.h"
 #include "libavcodec/dnxhddata.h"
 #include "libavcodec/flac.h"
+#include "libavcodec/mpegaudiodata.h"
 #include "libavcodec/get_bits.h"
 
 #include "libavcodec/internal.h"
@@ -969,6 +970,44 @@ static int mov_write_dmlp_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *tra
     return update_size(pb, pos);
 }
 
+static int mov_write_mhac_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *track)
+{
+    int64_t pos = avio_tell(pb);
+    int layout = 0;
+
+    if (!track->extradata_size[track->last_stsd_index] ||
+         track->extradata_size[track->last_stsd_index] > UINT16_MAX) {
+        av_log(s, AV_LOG_ERROR,
+               "Invalid extradata size %d for MPEGH-H stream.\n",
+               track->extradata_size[track->last_stsd_index]);
+        return AVERROR(EINVAL);
+    }
+
+    avio_wb32(pb, 0);
+    ffio_wfourcc(pb, "mhaC");
+
+    avio_w8(pb, 1); // ConfigurationVersion
+    avio_w8(pb, track->par->profile * 5 + track->par->level);
+
+    for (size_t i = 0; i < FF_ARRAY_ELEMS(ff_mpa_cicp_channel_layout_masks); i++) {
+        if (ff_mpa_cicp_channel_layout_masks[i]) {
+            AVChannelLayout ch_layout;
+            av_channel_layout_from_mask(&ch_layout, ff_mpa_cicp_channel_layout_masks[i]);
+            if (!av_channel_layout_compare(&track->par->ch_layout, &ch_layout)) {
+                layout = i;
+                break;
+            }
+        }
+    }
+
+    avio_w8(pb, layout);
+    avio_wb16(pb, track->extradata_size[track->last_stsd_index]);
+    avio_write(pb, track->extradata[track->last_stsd_index],
+                   track->extradata_size[track->last_stsd_index]);
+
+    return update_size(pb, pos);
+}
+
 static int mov_write_SA3D_tag(AVFormatContext *s, AVIOContext *pb, MOVTrack *track)
 {
     const AVDictionaryEntry *str = av_dict_get(track->st->metadata, "SA3D", NULL, 0);
@@ -1551,6 +1590,8 @@ static int mov_write_audio_tag(AVFormatContext *s, AVIOContext *pb, MOVMuxContex
         ret = mov_write_dops_tag(s, pb, track);
     else if (track->par->codec_id == AV_CODEC_ID_TRUEHD)
         ret = mov_write_dmlp_tag(s, pb, track);
+    else if (track->par->codec_id == AV_CODEC_ID_MPEGH_3D_AUDIO)
+        ret = mov_write_mhac_tag(s, pb, track);
     else if (tag == MOV_MP4_IPCM_TAG || tag == MOV_MP4_FPCM_TAG) {
         if (track->par->sample_rate > UINT16_MAX)
             mov_write_srat_tag(pb, track);
@@ -8187,9 +8228,9 @@ static int mov_init_iamf_track(AVFormatContext *s)
         const AVStreamGroup *stg = s->stream_groups[i];
         switch(stg->type) {
         case AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT:
-            for (int j = 0; j < stg->nb_streams; j++) {
-                first_iamf_idx = FFMIN(stg->streams[j]->index, first_iamf_idx);
-                last_iamf_idx  = FFMAX(stg->streams[j]->index, last_iamf_idx);
+            for (int j = 0; j < stg->nb_entries; j++) {
+                first_iamf_idx = FFMIN(stg->entries[j]->stream->index, first_iamf_idx);
+                last_iamf_idx  = FFMAX(stg->entries[j]->stream->index, last_iamf_idx);
             }
 
             ret = ff_iamf_add_audio_element(iamf, stg, s);
@@ -8217,8 +8258,8 @@ static int mov_init_iamf_track(AVFormatContext *s)
         AVStreamGroup *stg = s->stream_groups[i];
         if (stg->type != AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT)
             continue;
-        for (int j = 0; j < stg->nb_streams; j++)
-            stg->streams[j]->priv_data = track;
+        for (int j = 0; j < stg->nb_entries; j++)
+            stg->entries[j]->stream->priv_data = track;
     }
 
     ret = avio_open_dyn_buf(&track->iamf_buf);
@@ -8355,15 +8396,19 @@ static int mov_init(AVFormatContext *s)
             av_log(s, AV_LOG_ERROR, "AVIF output requires exactly one or two streams\n");
             return AVERROR(EINVAL);
         }
-        if (s->streams[0]->codecpar->codec_type != AVMEDIA_TYPE_VIDEO &&
+        if (s->streams[0]->codecpar->codec_type != AVMEDIA_TYPE_VIDEO ||
             (s->nb_streams > 1 && s->streams[1]->codecpar->codec_type != AVMEDIA_TYPE_VIDEO)) {
             av_log(s, AV_LOG_ERROR, "AVIF output supports only video streams\n");
+            return AVERROR(EINVAL);
+        }
+        if (!av_pix_fmt_desc_get(s->streams[0]->codecpar->format)) {
+            av_log(s, AV_LOG_ERROR, "AVIF output requires a known pixel format\n");
             return AVERROR(EINVAL);
         }
         if (s->nb_streams > 1) {
             const AVPixFmtDescriptor *pixdesc =
                 av_pix_fmt_desc_get(s->streams[1]->codecpar->format);
-            if (pixdesc->nb_components != 1) {
+            if (!pixdesc || pixdesc->nb_components != 1) {
                 av_log(s, AV_LOG_ERROR, "Second stream for AVIF (alpha) output must have exactly one plane\n");
                 return AVERROR(EINVAL);
             }
@@ -8374,15 +8419,24 @@ static int mov_init(AVFormatContext *s)
     for (i = 0; i < s->nb_stream_groups; i++) {
         AVStreamGroup *stg = s->stream_groups[i];
 
+        for (int j = 0; j < stg->nb_entries; j++) {
+            if (stg->entries[j]->type != AV_STREAM_GROUP_ENTRY_STREAM) {
+                av_log(s, AV_LOG_ERROR, "Unsupported Stream Group entry #%d "
+                                        "in Stream Group id %"PRId64"\n",
+                       i, stg->id);
+                return AVERROR(EINVAL);
+            }
+        }
+
         if (stg->type == AV_STREAM_GROUP_PARAMS_LCEVC) {
-            if (stg->nb_streams != 2) {
+            if (stg->nb_entries != 2) {
                 av_log(s, AV_LOG_ERROR, "Exactly two Streams are supported for Stream Groups of type LCEVC\n");
                 return AVERROR(EINVAL);
             }
             AVStreamGroupLayeredVideo *lcevc = stg->params.layered_video;
             if (lcevc->el_index > 1)
                 return AVERROR(EINVAL);
-            AVStream *st = stg->streams[lcevc->el_index];
+            AVStream *st = stg->entries[lcevc->el_index]->stream;
             if (st->codecpar->codec_id != AV_CODEC_ID_LCEVC) {
                 av_log(s, AV_LOG_ERROR, "Stream #%u is not an LCEVC stream\n", lcevc->el_index);
                 return AVERROR(EINVAL);
@@ -8393,8 +8447,8 @@ static int mov_init(AVFormatContext *s)
         if (stg->type != AV_STREAM_GROUP_PARAMS_IAMF_AUDIO_ELEMENT)
             continue;
 
-        for (int j = 0; j < stg->nb_streams; j++) {
-            AVStream *st = stg->streams[j];
+        for (int j = 0; j < stg->nb_entries; j++) {
+            AVStream *st = stg->entries[j]->stream;
 
             if (st->priv_data) {
                 av_log(s, AV_LOG_ERROR, "Stream %d is present in more than one Stream Group of type "
@@ -8749,13 +8803,13 @@ static int mov_init(AVFormatContext *s)
         switch (stg->type) {
         case AV_STREAM_GROUP_PARAMS_LCEVC: {
             AVStreamGroupLayeredVideo *lcevc = stg->params.layered_video;
-            AVStream *st    = stg->streams[lcevc->el_index];
+            AVStream *st    = stg->entries[lcevc->el_index]->stream;
             MOVTrack *track = st->priv_data;
 
             for (int j = 0; j < mov->nb_tracks; j++) {
                 MOVTrack *trk = &mov->tracks[j];
 
-                if (trk->st == stg->streams[!lcevc->el_index]) {
+                if (trk->st == stg->entries[!lcevc->el_index]->stream) {
                     track->src_track = av_malloc(sizeof(*track->src_track));
                     if (!track->src_track)
                         return AVERROR(ENOMEM);
@@ -8773,12 +8827,12 @@ static int mov_init(AVFormatContext *s)
             const AVStreamGroupTREF *tref = stg->params.tref;
             MOVTrack *track;
 
-            if (tref->metadata_index >= stg->nb_streams)
+            if (tref->metadata_index >= stg->nb_entries)
                 return AVERROR(EINVAL);
 
-            track = stg->streams[tref->metadata_index]->priv_data;
-            for (int j = 0; j < stg->nb_streams; j++) {
-                const AVStream *st2 = stg->streams[j];
+            track = stg->entries[tref->metadata_index]->stream->priv_data;
+            for (int j = 0; j < stg->nb_entries; j++) {
+                const AVStream *st2 = stg->entries[j]->stream;
                 int index = -1;
 
                 if (j == tref->metadata_index)

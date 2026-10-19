@@ -228,9 +228,15 @@ static int rtp_write_header(AVFormatContext *s1)
             s->nal_length_size = (st->codecpar->extradata[21] & 0x03) + 1;
         }
         break;
-    case AV_CODEC_ID_MJPEG:
     case AV_CODEC_ID_BITPACKED:
     case AV_CODEC_ID_RAWVIDEO:
+        if (st->codecpar->width > 32767 || st->codecpar->height > 32767) {
+            av_log(s1, AV_LOG_ERROR, "dimensions %dx%d too large for RFC 4175\n",
+                   st->codecpar->width, st->codecpar->height);
+            return AVERROR(EINVAL);
+        }
+        av_fallthrough;
+    case AV_CODEC_ID_MJPEG:
         if (st->codecpar->width <= 0 || st->codecpar->height <= 0) {
             av_log(s1, AV_LOG_ERROR, "dimensions not set\n");
             return AVERROR(EINVAL);
@@ -378,6 +384,8 @@ void ff_rtp_send_data(AVFormatContext *s1, const uint8_t *buf1, int len, int m)
     avio_flush(s1->pb);
 
     s->seq = (s->seq + 1) & 0xffff;
+    if (!s->seq)
+        s->seq_high++;
     s->octet_count += len;
     s->packet_count++;
 }
@@ -597,12 +605,24 @@ static int rtp_write_packet(AVFormatContext *s1, AVPacket *pkt)
     case AV_CODEC_ID_MPEG2VIDEO:
         ff_rtp_send_mpegvideo(s1, pkt->data, size);
         break;
-    case AV_CODEC_ID_AAC:
+    case AV_CODEC_ID_AAC: {
+        const uint8_t *aac_frame = pkt->data;
+
+        /* skip ADTS header, if present */
+        if (!st->codecpar->extradata_size) {
+            if (size < 7) {
+                av_log(s1, AV_LOG_ERROR, "AAC packet too small for ADTS header\n");
+                break;
+            }
+            aac_frame += 7;
+            size      -= 7;
+        }
         if (s->flags & FF_RTP_FLAG_MP4A_LATM)
-            ff_rtp_send_latm(s1, pkt->data, size);
+            ff_rtp_send_latm(s1, aac_frame, size);
         else
-            ff_rtp_send_aac(s1, pkt->data, size);
+            ff_rtp_send_aac(s1, aac_frame, size);
         break;
+    }
     case AV_CODEC_ID_AMR_NB:
     case AV_CODEC_ID_AMR_WB:
         ff_rtp_send_amr(s1, pkt->data, size);

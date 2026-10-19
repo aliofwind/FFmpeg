@@ -233,6 +233,7 @@ External library support:
   --enable-libdvdnav       enable libdvdnav, needed for DVD demuxing [no]
   --enable-libdvdread      enable libdvdread, needed for DVD demuxing [no]
   --enable-libfdk-aac      enable AAC de/encoding via libfdk-aac [no]
+  --enable-libfdk-xhe-aac  enable xHE-AAC encoding via libfdk-xhe-aac [no]
   --enable-libflite        enable flite (voice synthesis) support via libflite [no]
   --enable-libfontconfig   enable libfontconfig, useful for drawtext filter [no]
   --enable-libfreetype     enable libfreetype, needed for drawtext filter [no]
@@ -2031,6 +2032,7 @@ EXTERNAL_LIBRARY_GPL_LIST="
 EXTERNAL_LIBRARY_NONFREE_LIST="
     decklink
     libfdk_aac
+    libfdk_xhe_aac
     libmpeghdec
 "
 
@@ -2534,6 +2536,7 @@ SYSTEM_FUNCS="
     mmap
     mprotect
     nanosleep
+    open_osfhandle
     PeekNamedPipe
     posix_memalign
     prctl
@@ -2541,6 +2544,7 @@ SYSTEM_FUNCS="
     pthread_set_name_np
     pthread_setaffinity_np
     pthread_setname_np
+    realpath
     sched_getaffinity
     SecItemImport
     SetConsoleTextAttribute
@@ -3034,7 +3038,7 @@ deflate_wrapper_deps="zlib"
 dirac_parse_select="golomb"
 dovi_rpudec_select="golomb"
 dovi_rpuenc_select="golomb"
-dnn_deps="avformat swscale"
+dnn_deps="avformat swscale threads"
 dnn_deps_any="libtensorflow libopenvino libtorch libonnxruntime"
 error_resilience_select="me_cmp"
 evcparse_select="golomb"
@@ -3182,6 +3186,7 @@ iac_decoder_select="imc_decoder"
 imc_decoder_select="bswapdsp sinewin"
 imm4_decoder_select="bswapdsp idctdsp"
 imm5_decoder_select="h264_decoder hevc_decoder"
+imm6_decoder_select="h264_decoder"
 indeo3_decoder_select="hpeldsp"
 indeo4_decoder_select="ividsp"
 indeo5_decoder_select="ividsp"
@@ -3806,6 +3811,8 @@ libdavs2_decoder_select="avs2_parser"
 libfdk_aac_decoder_deps="libfdk_aac"
 libfdk_aac_encoder_deps="libfdk_aac"
 libfdk_aac_encoder_select="audio_frame_queue"
+libfdk_xhe_aac_encoder_deps="libfdk_xhe_aac"
+libfdk_xhe_aac_encoder_select="audio_frame_queue"
 libgme_demuxer_deps="libgme"
 libgsm_decoder_deps="libgsm"
 libgsm_encoder_deps="libgsm"
@@ -4098,6 +4105,7 @@ unix_protocol_deps="sys_un_h"
 unix_protocol_select="network"
 ipfs_gateway_protocol_select="https_protocol"
 ipns_gateway_protocol_select="https_protocol"
+windows_handle_protocol_deps="windows_h open_osfhandle GetStdHandle"
 
 # external library protocols
 libamqp_protocol_deps="librabbitmq"
@@ -4363,7 +4371,7 @@ ffmpeg_select="aformat_filter anull_filter atrim_filter crop_filter
 ffmpeg_suggest="ole32 psapi shell32"
 ffplay_deps="avcodec avformat avfilter swscale swresample sdl2"
 ffplay_select="crop_filter transpose_filter hflip_filter vflip_filter rotate_filter lcevc_merge_bsf"
-ffplay_suggest="shell32 libplacebo vulkan"
+ffplay_suggest="shell32 libplacebo vulkan libass"
 ffprobe_deps="avcodec avformat"
 ffprobe_suggest="shell32"
 
@@ -5167,6 +5175,7 @@ msvc_common_flags(){
             # generic catch all at the bottom will print the original flag.
             -Wall)                ;;
             -Wextra)              ;;
+            -Werror)              echo -WX ;;
             -std=c*)              echo /std:${flag#-std=};;
             # Common flags
             -fomit-frame-pointer) ;;
@@ -6307,25 +6316,21 @@ case $target_os in
         ;;
 esac
 
-# test if creating links works
-link_dest=$(mktemp -u $TMPDIR/dest_XXXXXXXX)
-link_name=$(mktemp -u $TMPDIR/name_XXXXXXXX)
-mkdir "$link_dest"
-$ln_s "$link_dest" "$link_name"
-touch "$link_dest/test_file"
-if [ "$source_path" != "." ] && [ "$source_path" != "./src" ] && ([ ! -d src ] || [ -L src ]) && [ -e "$link_name/test_file" ]; then
-    # create link to source path
+# Ask for native links and keep the link only if the compiler works with them.
+link_dir(){
+    MSYS="$MSYS winsymlinks:native" CYGWIN="$CYGWIN winsymlinks:native" $ln_s "$@"
+}
+
+# Link the source tree into the build directory and use it the way the build
+# does, with the full source path as the fallback.
+source_link="$source_path"
+if [ "$source_path" != "." ] && [ "$source_path" != "./src" ] && ([ ! -d src ] || [ -L src ]); then
     [ -e src ] && rm src
-    $ln_s "$source_path" src
-    source_link=src
-else
-    # creating directory links doesn't work
-    # fall back to using the full source path
-    source_link="$source_path"
+    link_dir "$source_path" src && [ -L src ] && test_cpp -I. <<EOF && source_link=src
+#include "src/libavutil/version_major.h"
+EOF
+    [ "$source_link" = src ] || rm -rf src
 fi
-# cleanup
-rm -r "$link_dest"
-rm -r "$link_name"
 
 # determine libc flavour
 
@@ -6666,7 +6671,7 @@ elif enabled parisc; then
 
 elif enabled ppc; then
 
-    check_inline_asm dcbzl     '"dcbzl 0, %0" :: "r"(0)'
+    disabled dcbzl || check_inline_asm dcbzl '"dcbzl 0, %0" :: "r"(0)'
     check_inline_asm ibm_asm   '"add 0, 0, 0"'
     check_inline_asm ppc4xx    '"maclhw r10, r11, r12"'
     check_inline_asm xform_asm '"lwzx %1, %y0" :: "Z"(*(int*)0), "r"(0)'
@@ -6903,11 +6908,13 @@ check_func  usleep
 
 check_func_headers conio.h kbhit
 check_func_headers io.h setmode
+check_func_headers io.h _open_osfhandle && enable open_osfhandle
 check_func_headers lzo/lzo1x.h lzo1x_999_compress
 check_func_headers mach/mach_time.h mach_absolute_time
 check_func_headers setjmp.h siglongjmp
 check_func_headers signal.h sigaction
 check_func_headers stdlib.h getenv
+check_func_headers stdlib.h realpath
 check_func_headers sys/ioctl.h ioctl
 check_func_headers sys/stat.h lstat
 check_func_headers sys/auxv.h getauxval
@@ -7197,8 +7204,9 @@ enabled cairo             && require_pkg_config cairo cairo "cairo.h" cairo_crea
 enabled cuda_nvcc         && { check_nvcc cuda_nvcc || die "ERROR: failed checking for nvcc."; }
 enabled chromaprint       && { check_pkg_config chromaprint libchromaprint "chromaprint.h" chromaprint_get_version ||
                                require chromaprint chromaprint.h chromaprint_get_version -lchromaprint; }
-enabled decklink          && { require_headers DeckLinkAPI.h &&
-                               { test_cpp_condition DeckLinkAPIVersion.h "BLACKMAGIC_DECKLINK_API_VERSION >= 0x0a0b0000" || die "ERROR: Decklink API version must be >= 10.11"; } }
+enabled decklink          && { { test_cxxflags_cc "" DeckLinkAPI.h 1 || die "ERROR: DeckLinkAPI.h not found"; } &&
+                               { test_cpp_condition DeckLinkAPIVersion.h "BLACKMAGIC_DECKLINK_API_VERSION >= 0x0a0b0000" &&
+                                 test_cxxflags_cc "" DeckLinkAPIVersion.h "BLACKMAGIC_DECKLINK_API_VERSION >= 0x0a0b0000" || die "ERROR: Decklink API version must be >= 10.11"; } }
 enabled frei0r            && require_headers "frei0r.h"
 enabled gmp               && require gmp gmp.h mpz_export -lgmp
 enabled gnutls            && require_pkg_config gnutls gnutls gnutls/gnutls.h gnutls_global_init
@@ -7240,6 +7248,7 @@ enabled libdvdread        && require_pkg_config libdvdread "dvdread >= 6.1.1" dv
 enabled libfdk_aac        && { check_pkg_config libfdk_aac fdk-aac "fdk-aac/aacenc_lib.h" aacEncOpen ||
                                { require libfdk_aac fdk-aac/aacenc_lib.h aacEncOpen -lfdk-aac &&
                                  warn "using libfdk without pkg-config"; } }
+enabled libfdk_xhe_aac    && require_pkg_config libfdk_xhe_aac fdk-xhe-aac "fdk-xhe-aac/xHEAACEnc.h" IIS_xHEAACEnc_Open
 flite_extralibs="-lflite_cmu_time_awb -lflite_cmu_us_awb -lflite_cmu_us_kal -lflite_cmu_us_kal16 -lflite_cmu_us_rms -lflite_cmu_us_slt -lflite_usenglish -lflite_cmulex -lflite"
 enabled libflite          && require libflite "flite/flite.h" flite_init $flite_extralibs
 enabled fontconfig        && enable libfontconfig
@@ -7813,18 +7822,11 @@ fi
 
 enabled debug && add_allcflags -g"$debuglevel" && add_asflags -g"$debuglevel"
 
-for lang in c cxx; do
-    test_${lang}flags -Werror=unused-command-line-argument &&
-        append unknown_warning_${lang}flags "-Werror=unused-command-line-argument"
-    test_${lang}flags -Werror=unknown-warning-option &&
-        append unknown_warning_${lang}flags "-Werror=unknown-warning-option"
-done
-
 check_warning(){
     warning_flag=$1
     flag_to_add=${2:-$1}
-    test_cflags $unknown_warning_cflags $warning_flag && add_cflags $flag_to_add
-    test_cxxflags $unknown_warning_cxxflags $warning_flag && add_cxxflags $flag_to_add
+    test_cflags -Werror $warning_flag && add_cflags $flag_to_add
+    test_cxxflags -Werror $warning_flag && add_cxxflags $flag_to_add
 }
 
 check_disable_warning(){
@@ -7834,7 +7836,7 @@ check_disable_warning(){
 
 check_c_warning(){
     warning_flag=$1
-    test_cflags $unknown_warning_cflags $warning_flag && add_cflags $warning_flag
+    test_cflags -Werror $warning_flag && add_cflags $warning_flag
 }
 
 # add some useful compiler flags if supported
@@ -7881,7 +7883,7 @@ check_disable_warning -Wno-microsoft-enum-forward-reference
 
 check_disable_warning_headers(){
     warning_flag=-W${1#-Wno-}
-    test_cflags $unknown_warning_cflags $warning_flag && add_cflags_headers $1
+    test_cflags -Werror $warning_flag && add_cflags_headers $1
 }
 
 check_disable_warning_headers -Wno-deprecated-declarations

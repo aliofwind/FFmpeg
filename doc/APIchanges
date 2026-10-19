@@ -2,6 +2,65 @@ The last version increases of all libraries were on 2026-06-23.
 
 API changes, most recent first:
 
+2026-10-18 - xxxxxxxxxx - lavc 63.21.100 - codec_id.h
+  Add AV_CODEC_ID_IMM6.
+
+2026-10-xx - xxxxxxxxxx - lavf 63.11.100 - avio.h
+  Add avio_open_dir2().
+
+2026-10-xx - xxxxxxxxxx - lavu 61.14.100 - gain_map.h
+  Add av_gain_map_params_from_iso21496() and av_gain_map_params_to_iso21496().
+  Add AV_GAIN_MAP_MAX_PAYLOAD_SIZE.
+
+2026-10-12 - xxxxxxxxxx - lavc 63.19.100 - packet.h
+  Add AV_PKT_DATA_GAIN_MAP_PARAMS.
+
+2026-10-12 - xxxxxxxxxx - lavf 63.10.100 - avformat.h
+  Add AVStreamGroupEntry
+  Add AV_STREAM_GROUP_ENTRY_STREAM and AV_STREAM_GROUP_ENTRY_STREAM_GROUP
+  Add AVStreamGroup.entries, AVStreamGroup.nb_entries
+  Add AVStreamGroup.coded_side_data, AVStreamGroup.nb_coded_side_data
+  Add avformat_stream_group_add_stream_group()
+  Deprecate AVStreamGroup.streams, AVStreamGroup.nb_streams
+  Deprecate AVStreamGroupTileGrid.coded_side_data, AVStreamGroupTileGrid.nb_coded_side_data
+
+2026-10-xx - xxxxxxxxxx - lavu 61.13.100 - raw_color_params.h
+  Add AV_RAW_COLOR_PARAMS_RW2 and AVRW2RawColorParams.
+
+2026-10-xx - xxxxxxxxxx - lavc 63.18.100 - codec_id.h
+  Add AV_CODEC_ID_RW2.
+
+2026-10-07 - xxxxxxxxxx - lavu 61.12.100 - opt.h
+  Add AV_OPT_SERIALIZE_OPT_FLAGS_EXCLUDE.
+
+2026-10-03 - xxxxxxxxxx - lavu 61.11.100 - pixfmt.h
+  Add AV_PIX_FMT_XYZP12LE, AV_PIX_FMT_XYZP12BE, and AV_PIX_FMT_XYZP12.
+
+2026-09-xx - xxxxxxxxxx - lavfi 12.5.100 - avfilter.h buffersrc.h buffersink.h
+  Add AVFilterLink.chroma_location, AVBufferSrcParameters.chroma_location and
+  av_buffersink_get_chroma_location().
+
+2026-09-xx - xxxxxxxxxx - lavc 63.16.100 - avcodec.h
+  Add AV_CODEC_CONFIG_CHROMA_LOCATION.
+
+2026-08-xx - xxxxxxxxxx - lavf 63.8.100 - avformat.h
+  Add AV_STREAM_GROUP_PARAMS_GAIN_MAP.
+
+2026-09-30 - xxxxxxxxxx - lavu 61.10.100 - frame.h gain_map.h
+  Add AV_FRAME_DATA_GAIN_MAP_PARAMS.
+  Add AV_ISO21496_VERSION, AV_ISO21496_IDENTIFIER.
+  Add AVGainMapParams.
+  Add av_gain_map_params_validate(), av_gain_map_channels_identical().
+  Add av_gain_map_params_alloc(), av_gain_map_params_create_side_data().
+
+2026-09-27 - xxxxxxxxxx - lavc 63.15.100 - defs.h
+  Add AV_PROFILE_MPEGH_3DA_MAIN, AV_PROFILE_MPEGH_3DA_HIGH
+  AV_PROFILE_MPEGH_3DA_LC, AV_PROFILE_MPEGH_3DA_BL.
+
+2026-09-27 - xxxxxxxxxx - lavu 61.9.100 - channel_layout.h
+  Add AV_CH_LAYOUT_5POINT1POINT6 and AV_CHANNEL_LAYOUT_5POINT1POINT6.
+  Add AV_CH_LAYOUT_7POINT1POINT6 and AV_CHANNEL_LAYOUT_7POINT1POINT6.
+
 2026-09-xx - xxxxxxxxxx - lavu 61.8.100 - file.h
   Add av_file_map_shared() and av_file_unmap_shared().
 

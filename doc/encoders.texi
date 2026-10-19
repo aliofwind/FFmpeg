@@ -44,6 +44,13 @@ Set quality for variable bit rate (VBR) mode. This option is valid only using
 the @command{ffmpeg} command-line tool. For library interface users, use
 @option{global_quality}.
 
+With the default @samp{nmr} coder, VBR holds a constant noise-to-mask target
+and lets the bitrate follow the content. Higher values are finer: @code{1}
+lands near 128 kbps for typical stereo music, and each doubling of the value
+raises the rate by roughly a third; values above about 6 make no further
+difference. A quality setting takes precedence over @option{b} and
+@option{aac_rc}.
+
 @item cutoff
 Set cutoff frequency. If unspecified will allow the encoder to dynamically
 adjust the cutoff to improve clarity on low bitrates.
@@ -76,6 +83,22 @@ Uses a cheaper version of twoloop algorithm that doesn't try to do as many
 clever adjustments. Worse with low bitrates (less than 64kbps), but is better
 and much faster at higher bitrates.
 
+@end table
+
+@item aac_rc
+Rate-control mode of the @samp{nmr} coder when a bitrate is set with @option{b}
+(other coders ignore it; @option{q} takes precedence). Possible values:
+
+@table @samp
+@item cbr
+Constant bitrate within the decoder's bit reservoir. This is the default.
+
+@item abr
+Average bitrate: a constant-quality target, as in VBR, whose set-point a slow
+servo moves to meet @option{b} over the length of the stream. Local quality
+stays constant, so short files and individual passages can deviate from the
+requested rate; the average converges over minutes rather than seconds. Below
+roughly 56 kbps stereo the rate lands above the request; use @samp{cbr} there.
 @end table
 
 @item aac_ms
@@ -802,6 +825,45 @@ ffmpeg -i input.wav -c:a libfdk_aac -profile:a aac_he -b:a 64k output.m4a
 @end example
 @end itemize
 
+@section libfdk-xhe-aac
+
+libfdk-xhe-aac (Extended High-Efficiency Advanced Audio Coding) encoder wrapper.
+
+The libfdk-xhe-aac library is based on the Fraunhofer FDK Extended High
+Efficiency AAC Encoder Software code from the Android project.
+
+Requires the presence of the libfdk-xhe-aac headers and library during
+configuration. You need to explicitly configure the build with
+@code{--enable-libfdk-xhe-aac}. The library is also incompatible with GPL,
+so if you allow the use of GPL, you should configure with
+@code{--enable-gpl --enable-nonfree --enable-libfdk-xhe-aac}.
+
+@subsection Options
+
+The following are private options of the libfdk_xhe_aac encoder.
+
+@table @option
+@item vbr
+Set VBR mode, from 0 to 6. 0 is lowest quality and 6 is highest quality.
+A value of -1 will disable VBR, and CBR (Constant Bit Rate) is enabled.
+
+If not set, the default is CBR.
+
+@item live_loudness_level
+Set the expected loudness level of the stream, between -31 and -10
+dB LUFS. Defaults to -24 dB LUFS if not set.
+
+@item rap_length
+The duration between encoded Random Access Points in the bitstream.
+
+@item stream_id
+A unique ID of the encoded stream within an adaptation set. The ID
+is embedded into the encoded bitstream.
+
+If not set, the encoder tries to generate a hopefully unique ID for
+the stream.
+@end table
+
 @anchor{liblc3-enc}
 @section liblc3
 
@@ -894,6 +956,12 @@ while producing the worst quality.
 @item cutoff (@emph{--lowpass})
 Set lowpass cutoff frequency. If unspecified, the encoder dynamically
 adjusts the cutoff.
+
+@item strict (@emph{--strictly-enforce-ISO})
+Enable LAME's strict ISO buffer constraints when set to @samp{strict} or
+@samp{very}. Other values leave LAME's default buffer constraints unchanged.
+This can improve compatibility with some decoders, at the cost of reduced
+bit reservoir usage.
 
 @item reservoir
 Enable use of bit reservoir when set to 1. Default value is 1. LAME
@@ -1266,6 +1334,17 @@ Use the default huffman tables. This is the default strategy.
 Compute and use optimal huffman tables.
 
 @end table
+
+@item intra_dc_precision @var{integer}
+Set the precision of the DC coefficient minus 8. Valid range is 0 to 3.
+Higher values quantize DC more finely as the DC entry of the written
+quantization table is 8 >> @var{intra_dc_precision} so 3 gives a DC
+quantizer of 1. Default is 0 which keeps the previous fixed DC
+quantizer of 8.
+
+Combined with @code{-q:v 1} and an @code{intra_matrix} of all 8s,
+a value of 3 produces a quantization table of all ones.
+
 @end table
 
 @anchor{wavpackenc}
@@ -1395,7 +1474,9 @@ The following options are supported by FFmpeg's FFv1 encoder.
 
 @table @option
 @item context
-Sets the context size, 0 (default) is small, 1 is big.
+Sets the context size, 0 (default) is small, 1 is big, 2 is minimal.
+The minimal context set compresses better when coding many slices, as each
+slice has too little data for larger context sets to adapt to.
 
 @item coder
 Set the coder,

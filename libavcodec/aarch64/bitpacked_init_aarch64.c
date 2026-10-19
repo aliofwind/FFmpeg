@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009 Mans Rullgard <mans@mansr.com>
+ * Copyright (c) 2026 Devin Heitmueller <dheitmueller@ltnglobal.com>
  *
  * This file is part of FFmpeg.
  *
@@ -18,29 +18,21 @@
  * Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA
  */
 
-#ifndef AVUTIL_ARM_TIMER_H
-#define AVUTIL_ARM_TIMER_H
-
 #include <stdint.h>
+
 #include "config.h"
+#include "libavutil/attributes.h"
+#include "libavutil/aarch64/cpu.h"
+#include "libavcodec/bitpacked_dec.h"
 
-#if defined(__APPLE__)
+void ff_bitpacked_unpack_yuv422p10_neon(const uint8_t *src,
+                                        uint16_t *y, uint16_t *u, uint16_t *v,
+                                        int width);
 
-#include <mach/mach_time.h>
-
-#define AV_READ_TIME mach_absolute_time
-
-#elif HAVE_INLINE_ASM && defined(__ARM_ARCH_7A__) && !defined(__ANDROID__)
-
-#define AV_READ_TIME read_time
-
-static inline uint64_t read_time(void)
+av_cold void ff_bitpacked_init_aarch64(struct BitpackedContext *s)
 {
-    unsigned cc;
-    __asm__ volatile ("mrc p15, 0, %0, c9, c13, 0" : "=r"(cc));
-    return cc;
+    int cpu_flags = av_get_cpu_flags();
+
+    if (!HAVE_BIGENDIAN && have_neon(cpu_flags))
+        s->unpack_yuv422p10 = ff_bitpacked_unpack_yuv422p10_neon;
 }
-
-#endif /* HAVE_INLINE_ASM && __ARM_ARCH_7A__ */
-
-#endif /* AVUTIL_ARM_TIMER_H */

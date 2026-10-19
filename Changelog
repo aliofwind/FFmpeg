@@ -14,6 +14,12 @@ version <next>:
 - NVIDIA optical flow accelerated interpolation filter (vf_fruc_vulkan)
 - H.264 data partitioning support
 - DSD (dsd_msbf) encoder
+- Rhetorex ADPCM decoder
+- ADPCM IMA Citrix decoder
+- Panasonic RW2 decoder
+- xHE-AAC encoding via libfdk-xhe-aac
+- jpegapp bitstream filter
+- Infinity IMM6 video decoder
 
 
 version 9.0:

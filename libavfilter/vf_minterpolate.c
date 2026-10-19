@@ -1053,7 +1053,7 @@ static void bilateral_obmc(MIContext *mi_ctx, Block *block, int mb_x, int mb_y, 
                 nb_x = (((x - start_x) >> (mi_ctx->log2_mb_size - 1)) * 2 - 3) / 2;
                 nb_y = (((y - start_y) >> (mi_ctx->log2_mb_size - 1)) * 2 - 3) / 2;
 
-                if (nb_x || nb_y) {
+                if ((nb_x || nb_y) && mb_x + nb_x < mi_ctx->b_width && mb_y + nb_y < mi_ctx->b_height) {
                     uint64_t sbad = sbads[nb_x + 1 + (nb_y + 1) * 3];
                     nb = &mi_ctx->int_blocks[mb_x + nb_x + (mb_y + nb_y) * mi_ctx->b_width];
 
@@ -1208,12 +1208,12 @@ static int filter_frame(AVFilterLink *inlink, AVFrame *avf_in)
     return 0;
 }
 
-static av_cold void free_blocks(Block *block, int sb)
+static av_cold void free_blocks(Block *block)
 {
     if (block->subs)
-        free_blocks(block->subs, 1);
-    if (sb)
-        av_freep(&block);
+        for (int i = 0; i < 4; i++)
+            free_blocks(&block->subs[i]);
+    av_freep(&block->subs);
 }
 
 static av_cold void uninit(AVFilterContext *ctx)
@@ -1226,7 +1226,7 @@ static av_cold void uninit(AVFilterContext *ctx)
     av_freep(&mi_ctx->pixel_refs);
     if (mi_ctx->int_blocks)
         for (m = 0; m < mi_ctx->b_count; m++)
-            free_blocks(&mi_ctx->int_blocks[m], 0);
+            free_blocks(&mi_ctx->int_blocks[m]);
     av_freep(&mi_ctx->int_blocks);
 
     for (i = 0; i < NB_FRAMES; i++) {

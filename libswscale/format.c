@@ -556,6 +556,27 @@ bool ff_infer_colors(SwsColor *src, SwsColor *dst)
     return incomplete;
 }
 
+static int infer_loc_ref(SwsFormat *fmt, const SwsFormat *ref)
+{
+    if (fmt->loc != AVCHROMA_LOC_UNSPECIFIED ||
+        ref->loc == AVCHROMA_LOC_UNSPECIFIED ||
+        (!fmt->desc->log2_chroma_w && !fmt->desc->log2_chroma_h))
+        return 0;
+
+    fmt->loc = ref->loc;
+    return 1;
+}
+
+bool ff_infer_chroma_loc(SwsFormat *src, SwsFormat *dst)
+{
+    int incomplete = 0;
+
+    incomplete |= infer_loc_ref(dst, src);
+    incomplete |= infer_loc_ref(src, dst);
+
+    return incomplete;
+}
+
 void ff_sws_chroma_pos(const SwsFormat *fmt, bool *incomplete,
                        int *out_x_pos, int *out_y_pos)
 {
@@ -700,6 +721,7 @@ int sws_is_noop(const AVFrame *dst, const AVFrame *src)
     for (int field = 0; field < 2; field++) {
         SwsFormat dst_fmt = ff_fmt_from_frame(dst, field);
         SwsFormat src_fmt = ff_fmt_from_frame(src, field);
+        ff_infer_chroma_loc(&src_fmt, &dst_fmt);
         if (!ff_fmt_equal(&dst_fmt, &src_fmt))
             return 0;
         if (!dst_fmt.interlaced)
@@ -1500,6 +1522,9 @@ int ff_sws_decode_colors(SwsContext *ctx, SwsPixelType type,
         .lin  = fmt_decode_range(fmt, incomplete),
     }));
 
+    if (fmt->desc->flags & AV_PIX_FMT_FLAG_XYZ)
+        return 0; /* XYZ formats are treated as colorspaceless */
+
     /* Final step, decode colorspace */
     switch (fmt->csp) {
     case AVCOL_SPC_RGB:
@@ -1573,7 +1598,8 @@ int ff_sws_encode_colors(SwsContext *ctx, SwsPixelType type,
     if (!pixel_type)
          return AVERROR(ENOTSUP);
 
-    switch (dst->csp) {
+    /* See ff_sws_decode_colors(): XYZ formats have no colorspace matrix */
+    switch (dst->desc->flags & AV_PIX_FMT_FLAG_XYZ ? AVCOL_SPC_RGB : dst->csp) {
     case AVCOL_SPC_RGB:
         break;
     case AVCOL_SPC_UNSPECIFIED:
@@ -1810,6 +1836,11 @@ int ff_sws_op_list_generate(SwsContext *ctx, const SwsFormat *src,
     /* The new code does not yet support alpha blending */
     if (src->desc->flags & AV_PIX_FMT_FLAG_ALPHA &&
         ctx->alpha_blend != SWS_ALPHA_BLEND_NONE)
+        return AVERROR(ENOTSUP);
+
+    /* XYZ<->RGB conversion requires application of a gamma function which
+     * are not currently implemented */
+    if ((src->desc->flags ^ dst->desc->flags) & AV_PIX_FMT_FLAG_XYZ)
         return AVERROR(ENOTSUP);
 
     SwsOpList *ops = ff_sws_op_list_alloc();

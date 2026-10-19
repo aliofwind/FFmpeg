@@ -419,6 +419,40 @@ Gophers protocol.
 
 The Gopher protocol with TLS encapsulation.
 
+@section handle
+
+Windows handle access protocol.
+
+The accepted syntax is:
+@example
+handle: -handle @var{handle}
+@end example
+
+If @option{handle} is not specified, by default the output handle will be
+used for writing, input handle for reading. This protocol is only available
+on Windows. It has seek support if the handle corresponds to a regular file.
+It doesn't support passing the handle via URL.
+
+This protocol accepts the following options:
+
+@table @option
+@item blocksize
+Set I/O operation maximum block size, in bytes. Default value is
+@code{INT_MAX}, which results in not limiting the requested block size.
+Setting this value reasonably low improves user termination request reaction
+time, which is valuable if data transmission is slow.
+
+@item handle
+Set Windows handle.
+
+The supplied handle must already be valid in the calling process.
+When launching @command{ffmpeg}, arrange for the child process to
+inherit the handle before passing its numeric value with
+@option{handle}. Handles opened with @code{FILE_FLAG_OVERLAPPED}
+are not supported. Closing the protocol does not close the
+caller's original handle.
+@end table
+
 @section http
 
 HTTP (Hyper Text Transfer Protocol).
@@ -565,6 +599,10 @@ Reconnect automatically when disconnected before EOF is hit.
 @item reconnect_at_eof
 If set then eof is treated like an error and causes reconnection, this is useful
 for live / endless streams.
+This does not apply to the deliberately established end of a resource whose
+complete size is unknown, i.e. when a ranged request past the end is answered
+with @code{416}. Such an end is reported as a clean EOF and is not retried,
+unless @option{reconnect_on_http_error} lists 416 by number.
 
 @item reconnect_on_network_error
 Reconnect automatically in case of TCP/TLS errors during connect.
@@ -572,6 +610,10 @@ Reconnect automatically in case of TCP/TLS errors during connect.
 @item reconnect_on_http_error
 A comma separated list of HTTP status codes to reconnect on. The list can
 include specific status codes (e.g. '503') or the strings '4xx' / '5xx'.
+A @code{416} that ends a read or a seek past the end of a resource whose
+complete size is unknown is reported as EOF. It is retried first only if 416
+is listed by number, for example to read a resource that is still being
+written. '4xx' does not cover it.
 
 @item reconnect_streamed
 If set then even streamed/non seekable streams will be reconnected on errors.
@@ -1178,7 +1220,38 @@ Default is @code{5}.
 Set the threshold, in bytes, for when a readahead should be preferred over a seek and
 new HTTP request. This is useful, for example, to make sure the same connection
 is used for reading large video packets with small audio packets in between.
+
+@item icy
+If set to 1 request ICY (SHOUTcast) metadata from the server. If the server
+supports this, the metadata has to be retrieved by the application by reading
+the @option{icy_metadata_headers} and @option{icy_metadata_packet} options.
+The default is 1.
+
+@item icy_status
+If set to 1 accept the legacy Shoutcast v1 @code{ICY 200 OK} status line in
+place of an HTTP one. Any reply whose status line starts with @code{ICY 200}
+is then treated as a successful HTTP 200.
+The default is 1.
+
+@item icy_metadata_headers
+If the server supports ICY metadata, this contains the ICY-specific HTTP reply
+headers, separated by newline characters.
+
+@item icy_metadata_packet
+If the server supports ICY metadata, and @option{icy} was set to 1, this
+contains the last non-empty metadata packet sent by the server. It should be
+polled in regular intervals by applications interested in mid-stream metadata
+updates.
+
+@item metadata
+Set an exported dictionary containing Icecast metadata from the bitstream, if present.
+Only useful with the C API.
 @end table
+
+A stream carrying in-band ICY metadata is always treated as non-seekable, since
+its byte offsets do not address the payload. @option{seekable},
+@option{request_size} and @option{max_retries} therefore have no effect on such
+a stream.
 
 For more information see: @url{https://curl.se/libcurl/}.
 
@@ -1716,6 +1789,10 @@ The accepted options are:
 
 @item cache_dir
 Path to the directory where cache files are stored. This option is required.
+
+@item metadata_dir
+Path to the directory where metadata files are stored. Optional. If not
+specified, metadata is stored in the same directory as the cache file.
 
 @item block_shift
 Shift factor (log2) of the block size used for internal reads/writes. Defaults
@@ -2440,6 +2517,7 @@ exclude the source addresses in the multicast subscription.
 @item fifo_size=@var{units}
 Set the UDP receiving circular buffer size, expressed as a number of
 packets with size of 188 bytes. If not specified defaults to 7*4096.
+Set to 0 to disable the receiving circular buffer and its receive thread.
 
 @item overrun_nonfatal=@var{1|0}
 Survive in case of UDP receiving circular buffer overrun. Default

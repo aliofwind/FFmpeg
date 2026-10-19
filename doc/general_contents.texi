@@ -326,6 +326,14 @@ Go to @url{http://sourceforge.net/projects/opencore-amr/} and follow the
 instructions for installing the library.
 Then pass @code{--enable-libfdk-aac} to configure to enable it.
 
+@subsection Fraunhofer xHE-AAC library
+
+FFmpeg can make use of the Fraunhofer xHE-AAC library for xHE-AAC encoding.
+
+Go to @url{http://sourceforge.net/projects/opencore-amr/} and follow the
+instructions for installing the library.
+Then pass @code{--enable-libfdk-xhe-aac} to configure to enable it.
+
 @subsection Fraunhofer MPEG-H 3D Audio decoder library
 
 FFmpeg can make use of the Fraunhofer MPEG-H decoder library for MPEG-H 3DA decoding.
@@ -947,6 +955,8 @@ following image formats are supported:
     @tab V.Flash PTX format
 @item QOI          @tab X @tab X
     @tab Quite OK Image format
+@item RW2          @tab   @tab X
+    @tab Panasonic raw image, RawFormat 8 only
 @item SGI          @tab X @tab X
     @tab SGI RGB image format
 @item Sun Rasterfile  @tab X @tab X
@@ -1126,6 +1136,8 @@ following image formats are supported:
 @item IFF ByteRun1           @tab     @tab  X
     @tab IFF run length encoded bitmap
 @item Infinity IMM4          @tab     @tab  X
+@item Infinity IMM5          @tab     @tab  X
+@item Infinity IMM6          @tab     @tab  X
 @item Intel H.263            @tab     @tab  X
 @item Intel Indeo 2          @tab     @tab  X
 @item Intel Indeo 3          @tab     @tab  X
@@ -1318,6 +1330,7 @@ following image formats are supported:
 @item ADPCM IMA Acorn Replay @tab     @tab  X
 @item ADPCM IMA AMV          @tab  X  @tab  X
     @tab Used in AMV files
+@item ADPCM IMA Citrix       @tab     @tab  X
 @item ADPCM IMA Cunning Developments  @tab     @tab  X
 @item ADPCM IMA Electronic Arts EACS  @tab     @tab  X
 @item ADPCM IMA Electronic Arts SEAD  @tab     @tab  X
@@ -1346,6 +1359,7 @@ following image formats are supported:
 @item ADPCM Nintendo THP  @tab     @tab  X
 @item ADPCM Playstation      @tab     @tab  X
 @item ADPCM QT IMA           @tab  X  @tab  X
+@item ADPCM Rhetorex         @tab     @tab  X
 @item ADPCM Sanyo            @tab     @tab  X
 @item ADPCM SEGA CRI ADX     @tab  X  @tab  X
     @tab Used in Sega Dreamcast games.
